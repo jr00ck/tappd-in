@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Tappd In</title>
+
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#e8a838">
+
+<!-- iOS home screen support -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tappd In">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32">
+
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="ptr-indicator" class="ptr-indicator"><div class="ptr-spinner"></div></div>
+
+<div id="app-content">
+
+<header class="topbar">
+  <div class="topbar-row">
+    <h1>Tappd In</h1>
+    <button type="button" id="updated-badge" class="updated-badge" hidden
+      aria-expanded="false" aria-controls="whats-new">✓ Updated</button>
+    <button type="button" id="settings-toggle" class="icon-btn" title="Settings"
+      aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">⚙</button>
+  </div>
+  <div id="whats-new" class="whats-new collapsible" hidden></div>
+  <p class="tagline">Photo a can → open it in Untappd</p>
+</header>
+
+<main>
+  <section id="settings-panel" class="card settings-panel collapsible" hidden>
+    <div class="collapse-inner">
+      <h2 class="section-title">Settings</h2>
+      <p class="hint">
+        Untappd’s public beer search needs an approved app’s
+        <code>client_id</code> / <code>client_secret</code>. Browsers can’t call
+        <code>api.untappd.com</code> directly (no CORS), so point this PWA at a
+        tiny proxy you control — see <code>proxy/</code> in the repo. Credentials
+        stay on the worker, never in this page.
+      </p>
+      <div class="field">
+        <label for="proxy-url">Search proxy URL</label>
+        <input type="url" id="proxy-url" placeholder="https://your-worker.example/search"
+          autocomplete="off" spellcheck="false">
+      </div>
+      <p id="settings-status" class="hint" hidden></p>
+      <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save settings</button>
+    </div>
+  </section>
+
+  <section class="card capture-card">
+    <div class="capture-actions">
+      <button type="button" id="camera-btn" class="primary-btn">Take photo</button>
+      <button type="button" id="library-btn" class="secondary-outline-btn">Choose image</button>
+    </div>
+    <!-- capture=environment prefers the rear camera on phones that support it -->
+    <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+    <input type="file" id="library-input" accept="image/*" hidden>
+
+    <div id="preview-wrap" class="preview-wrap" hidden>
+      <img id="preview" alt="Selected beer can photo">
+      <button type="button" id="clear-photo-btn" class="link-btn clear-photo">Clear photo</button>
+    </div>
+
+    <p id="ocr-status" class="hint" aria-live="polite"></p>
+    <button type="button" id="recognize-btn" class="primary-btn" hidden>Identify beer</button>
+  </section>
+
+  <section id="identify-panel" class="card" hidden>
+    <h2 class="section-title">Label details</h2>
+    <p class="hint">Edit anything the OCR missed before searching Untappd.</p>
+
+    <div class="field">
+      <label for="brewery-field">Brewery</label>
+      <input type="text" id="brewery-field" autocomplete="off" placeholder="e.g. Finback Brewery">
+    </div>
+    <div class="field">
+      <label for="beer-field">Beer</label>
+      <input type="text" id="beer-field" autocomplete="off" placeholder="e.g. Something Mosaic">
+    </div>
+    <div class="field">
+      <label for="details-field">Other label text</label>
+      <textarea id="details-field" rows="3" placeholder="Style, ABV, extra words from the can…"></textarea>
+    </div>
+    <details class="raw-ocr">
+      <summary>Raw OCR text</summary>
+      <pre id="raw-ocr" class="raw-ocr-pre"></pre>
+    </details>
+
+    <button type="button" id="search-btn" class="primary-btn">Find on Untappd</button>
+    <p id="search-status" class="hint" aria-live="polite"></p>
+  </section>
+
+  <section id="results-panel" class="card" hidden>
+    <h2 class="section-title">Matches</h2>
+    <p class="hint">Pick a result returned by Untappd — URLs are never invented.</p>
+    <ul id="results-list" class="results"></ul>
+  </section>
+
+  <section id="match-panel" class="card match-card" hidden>
+    <h2 class="section-title">Selected beer</h2>
+    <p id="match-title" class="match-title"></p>
+    <p id="match-meta" class="hint"></p>
+    <p class="match-url-row">
+      <a id="match-url" class="match-url" href="#" target="_blank" rel="noopener noreferrer"></a>
+    </p>
+    <a id="open-untappd-btn" class="primary-btn open-untappd" href="#" target="_blank" rel="noopener noreferrer">
+      Open in Untappd
+    </a>
+    <p class="hint open-hint">
+      Uses the public HTTPS beer link. With Untappd installed (v4.1.4+), iOS/Android
+      usually hand off into the app; otherwise the website opens.
+    </p>
+  </section>
+
+  <section class="card paste-card">
+    <h2 class="section-title">Paste or search manually</h2>
+    <p class="hint">
+      No proxy yet? Search Untappd yourself, then paste the beer page URL here.
+      Only <code>untappd.com/b/…/&lt;id&gt;</code> links are accepted.
+    </p>
+    <div class="field">
+      <label for="paste-url">Untappd beer URL</label>
+      <input type="url" id="paste-url" placeholder="https://untappd.com/b/…"
+        autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row-actions">
+      <button type="button" id="apply-paste-btn" class="secondary-outline-btn">Use this URL</button>
+      <a id="manual-search-link" class="link-btn" href="https://untappd.com/search?q=&amp;type=beer"
+        target="_blank" rel="noopener noreferrer">Search Untappd ↗</a>
+    </div>
+    <p id="paste-status" class="hint" hidden></p>
+  </section>
+
+  <footer class="app-footer">
+    <span class="app-footer-version"><span id="app-version"></span></span>
+  </footer>
+</main>
+
+</div>
+
+<!-- Tesseract.js: on-device OCR via WASM. Native Vision/ML Kit APIs are not
+     exposed to PWAs on iOS/Android; Chrome's TextDetector is used when present. -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
