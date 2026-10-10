@@ -32,7 +32,7 @@
       aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">⚙</button>
   </div>
   <div id="whats-new" class="whats-new collapsible" hidden></div>
-  <p class="tagline">Photo a can → open it in Untappd</p>
+  <p class="tagline">Speak the can → open it in Untappd</p>
 </header>
 
 <main>
@@ -40,68 +40,76 @@
     <div class="collapse-inner">
       <h2 class="section-title">Settings</h2>
       <p class="hint">
-        Untappd’s public beer search needs an approved app’s
-        <code>client_id</code> / <code>client_secret</code>. Browsers can’t call
-        <code>api.untappd.com</code> directly (no CORS), so point this PWA at a
-        tiny proxy you control — see <code>proxy/</code> in the repo. Credentials
-        stay on the worker, never in this page.
+        Keys stay <strong>only on this device</strong> (<code>localStorage</code>).
+        Nothing is committed to GitHub. Clear site data to wipe them.
       </p>
+
       <div class="field">
-        <label for="proxy-url">Search proxy URL</label>
-        <input type="url" id="proxy-url" placeholder="https://your-worker.example/search"
+        <label for="aiche-key">AICHE API key (Pro)</label>
+        <input type="password" id="aiche-key" placeholder="sk_live_…"
           autocomplete="off" spellcheck="false">
       </div>
+      <p class="hint">
+        Used for in-app voice → text via
+        <code>POST https://api.aiche.app/v1/transcribe</code> (batch).
+        Add brewery/beer names to AICHE’s account custom vocabulary (max 50)
+        for better proper-noun spelling — that dictionary applies to API calls too.
+      </p>
+
+      <details class="advanced-settings">
+        <summary>Advanced: Untappd search proxy</summary>
+        <p class="hint">
+          Optional. Official Untappd beer search needs a self-hosted proxy
+          (see <code>proxy/</code>). Leave blank for now — automatic lookup is still evolving.
+        </p>
+        <div class="field">
+          <label for="proxy-url">Search proxy URL</label>
+          <input type="url" id="proxy-url" placeholder="https://your-worker.example/search"
+            autocomplete="off" spellcheck="false">
+        </div>
+      </details>
+
       <p id="settings-status" class="hint" hidden></p>
       <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save settings</button>
     </div>
   </section>
 
-  <section class="card capture-card">
-    <div class="capture-actions">
-      <button type="button" id="camera-btn" class="primary-btn">Take photo</button>
-      <button type="button" id="library-btn" class="secondary-outline-btn">Choose image</button>
-    </div>
-    <!-- capture=environment prefers the rear camera on phones that support it -->
-    <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
-    <input type="file" id="library-input" accept="image/*" hidden>
-
-    <div id="preview-wrap" class="preview-wrap" hidden>
-      <img id="preview" alt="Selected beer can photo">
-      <button type="button" id="clear-photo-btn" class="link-btn clear-photo">Clear photo</button>
-    </div>
-
-    <p id="ocr-status" class="hint" aria-live="polite"></p>
-    <button type="button" id="recognize-btn" class="primary-btn" hidden>Identify beer</button>
+  <section class="card voice-card">
+    <h2 class="section-title">Voice</h2>
+    <p class="hint">
+      Say the brewery and beer name (e.g. “Roses by the Stairs, Fresh Hop This Is Growing Up”).
+      Requires an AICHE Pro key in Settings.
+    </p>
+    <button type="button" id="voice-btn" class="primary-btn voice-btn" aria-pressed="false">
+      Tap to speak
+    </button>
+    <p id="voice-status" class="hint" aria-live="polite"></p>
   </section>
 
-  <section id="identify-panel" class="card" hidden>
-    <h2 class="section-title">Label details</h2>
-    <p class="hint">Edit anything the OCR missed before searching Untappd.</p>
+  <section id="identify-panel" class="card">
+    <h2 class="section-title">Beer details</h2>
+    <p class="hint">Correct anything before lookup. You can also type, or dictate with AICHE’s system hotkey / iOS app into these fields.</p>
 
     <div class="field">
       <label for="brewery-field">Brewery</label>
-      <input type="text" id="brewery-field" autocomplete="off" placeholder="e.g. Finback Brewery">
+      <input type="text" id="brewery-field" autocomplete="off" placeholder="e.g. Roses by the Stairs">
     </div>
     <div class="field">
       <label for="beer-field">Beer</label>
-      <input type="text" id="beer-field" autocomplete="off" placeholder="e.g. Something Mosaic">
+      <input type="text" id="beer-field" autocomplete="off" placeholder="e.g. Fresh Hop This Is Growing Up">
     </div>
     <div class="field">
-      <label for="details-field">Other label text</label>
-      <textarea id="details-field" rows="3" placeholder="Style, ABV, extra words from the can…"></textarea>
+      <label for="details-field">Other details</label>
+      <textarea id="details-field" rows="2" placeholder="Style, ABV, extra notes…"></textarea>
     </div>
-    <details class="raw-ocr">
-      <summary>Raw OCR text</summary>
-      <pre id="raw-ocr" class="raw-ocr-pre"></pre>
-    </details>
 
-    <button type="button" id="search-btn" class="primary-btn">Find on Untappd</button>
+    <button type="button" id="search-btn" class="primary-btn">Find beer</button>
     <p id="search-status" class="hint" aria-live="polite"></p>
   </section>
 
   <section id="results-panel" class="card" hidden>
     <h2 class="section-title">Matches</h2>
-    <p class="hint">Pick a result returned by Untappd — URLs are never invented.</p>
+    <p class="hint">Pick a result — URLs are never invented.</p>
     <ul id="results-list" class="results"></ul>
   </section>
 
@@ -121,11 +129,33 @@
     </p>
   </section>
 
-  <section class="card paste-card">
-    <h2 class="section-title">Paste or search manually</h2>
+  <details class="card photo-ocr-details">
+    <summary>Photo / OCR (optional)</summary>
+    <div class="capture-actions">
+      <button type="button" id="camera-btn" class="secondary-outline-btn">Take photo</button>
+      <button type="button" id="library-btn" class="secondary-outline-btn">Choose image</button>
+    </div>
+    <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+    <input type="file" id="library-input" accept="image/*" hidden>
+
+    <div id="preview-wrap" class="preview-wrap" hidden>
+      <img id="preview" alt="Selected beer can photo">
+      <button type="button" id="clear-photo-btn" class="link-btn clear-photo">Clear photo</button>
+    </div>
+
+    <p id="ocr-status" class="hint" aria-live="polite"></p>
+    <button type="button" id="recognize-btn" class="secondary-outline-btn" hidden>Run OCR</button>
+    <details class="raw-ocr">
+      <summary>Raw OCR text</summary>
+      <pre id="raw-ocr" class="raw-ocr-pre"></pre>
+    </details>
+  </details>
+
+  <details class="card paste-card">
+    <summary>Temporary: paste Untappd URL</summary>
     <p class="hint">
-      No proxy yet? Search Untappd yourself, then paste the beer page URL here.
-      Only <code>untappd.com/b/…/&lt;id&gt;</code> links are accepted.
+      Fallback until automatic beer lookup lands. Only
+      <code>untappd.com/b/…/&lt;id&gt;</code> links are accepted.
     </p>
     <div class="field">
       <label for="paste-url">Untappd beer URL</label>
@@ -138,7 +168,7 @@
         target="_blank" rel="noopener noreferrer">Search Untappd ↗</a>
     </div>
     <p id="paste-status" class="hint" hidden></p>
-  </section>
+  </details>
 
   <footer class="app-footer">
     <span class="app-footer-version"><span id="app-version"></span></span>
@@ -147,8 +177,7 @@
 
 </div>
 
-<!-- Tesseract.js: on-device OCR via WASM. Native Vision/ML Kit APIs are not
-     exposed to PWAs on iOS/Android; Chrome's TextDetector is used when present. -->
+<!-- Tesseract.js kept for optional OCR path only. -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="app.js"></script>
 </body>

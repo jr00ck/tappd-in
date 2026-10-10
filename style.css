@@ -221,10 +221,48 @@ textarea:focus {
   color: var(--accent);
 }
 
+.voice-btn.is-recording {
+  background: var(--danger);
+  color: #fff;
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  50% { filter: brightness(1.15); }
+}
+
+.photo-ocr-details,
+.paste-card,
+.advanced-settings {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.photo-ocr-details > summary,
+.paste-card > summary,
+.advanced-settings > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.photo-ocr-details[open] > summary,
+.paste-card[open] > summary {
+  margin-bottom: 12px;
+}
+
+.advanced-settings {
+  margin: 12px 0;
+}
+
 .capture-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+  margin-top: 10px;
 }
 
 .primary-btn,

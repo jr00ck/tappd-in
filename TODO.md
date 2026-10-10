@@ -7,24 +7,21 @@ What's in the app already and what's still on the wishlist.
 ## In the app today
 
 - Mobile-first installable PWA (manifest + service worker + iOS home-screen tags)
-- Take photo (rear camera when available) or choose an existing image
-- On-device OCR: Chrome `TextDetector` when present, else Tesseract.js (WASM) — native Vision/ML Kit are **not** exposed to PWAs
-- Editable brewery / beer / label-detail fields when OCR is uncertain
-- Untappd match via optional self-hosted search proxy (official `/v4/search/beer`) — **never invents** beer URLs
-- Manual path: open Untappd public search + paste a canonical `untappd.com/b/…/id` URL
-- “Open in Untappd” uses the verified HTTPS beer link (app handoff on iOS/Android when Untappd is installed; website fallback)
-- Settings (proxy URL) stored in `localStorage` only
-- Pull-down to refresh for updates; ✓ Updated badge + release notes
-- GitHub Pages deploy on `v*` tags (same pattern as Gassy)
-- Changelog tooling: Conventional Commits + git-cliff
+- **Voice-first (beta):** batch AICHE `POST /v1/transcribe` with API key in on-device Settings only
+- Public Untappd URL helpers: beer `/b/`, brewery `/w/`, user, check-in, venue `/v/`, venue RSS, search
+- Photo / OCR demoted to an optional panel (TextDetector / Tesseract) — often weak on can art
+- Editable brewery / beer fields after voice or OCR
+- Optional Untappd search proxy still supported; paste URL kept as temporary fallback
+- “Open in Untappd” uses verified HTTPS beer links only
+- Pull-down to refresh; GitHub Pages on `v*` tags; git-cliff changelog tooling
 
 ---
 
 ## Wishlist
 
-- **Deployed search proxy** — stand up the Cloudflare Worker in `proxy/` with approved Untappd API credentials
-- **Server-side OCR fallback** — optional Worker/endpoint when on-device Tesseract is too slow or inaccurate on a device
-- **Smarter label parsing** — brewery/beer ranking using confidence, multi-line brand marks, barcode → Open Food Facts when present
+- **Automatic beer lookup** (no paste) — Catalog.beer and/or grounded search → verified Untappd URL; evaluate Catalog.beer as primary catalog with Untappd for social handoff
+- **AICHE browser CORS verification** — confirm `Allow-Origin` for GitHub Pages; fall back to streaming WebSocket or system dictation if batch is blocked
+- **AICHE custom vocabulary workflow** — guide for top ~50 brewery/beer names (account max 50; no bulk import API)
+- **Deployed search proxy** — only if Untappd official API remains the chosen resolver
 - **Cache recent matches** — local history of beers opened from this device
-- **Offline OCR assets** — pin Tesseract WASM + `eng` traineddata in the service worker cache
 - **HEIC handling** — convert/preview iPhone HEIC picks more reliably across browsers

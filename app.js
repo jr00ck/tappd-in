@@ -1,17 +1,25 @@
-/* Tappd In — beer can photo → Untappd beer page (vanilla PWA) */
+/* Tappd In — voice / photo → beer details → Untappd (vanilla PWA) */
 
 const SETTINGS_KEY = 'tappd-in.settings';
 const LAST_SEEN_KEY = 'tappd-in.lastSeenVersion';
+const AICHE_TRANSCRIBE_URL = 'https://api.aiche.app/v1/transcribe';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0-beta';
 const RELEASE_NOTES = [
-  'Photograph or pick a beer can label, run on-device OCR, and open the matched Untappd beer',
-  'Untappd search via optional self-hosted proxy (official API) — never invents beer URLs',
+  'Voice-first: batch AICHE transcription with API key stored only on-device',
+  'Public Untappd URL helpers for beer, brewery, user, check-in, venue, search, RSS',
+  'Photo OCR demoted to an optional panel',
 ];
 
-const BEER_URL_RE = /^https:\/\/(?:www\.)?untappd\.com\/b\/([a-z0-9-]+)\/(\d+)\/?(?:[?#].*)?$/i;
+// --- Public Untappd URL shapes (https only; never invent IDs/slugs) ---
 
-// --- Pure helpers (also exposed on window.TappdIn for tests) ---
+const UNTAPPD_HOST = 'untappd.com';
+const BEER_URL_RE = /^https:\/\/(?:www\.)?untappd\.com\/b\/([a-z0-9-]+)\/(\d+)\/?(?:[?#].*)?$/i;
+const BREWERY_URL_RE = /^https:\/\/(?:www\.)?untappd\.com\/w\/([a-z0-9-]+)\/(\d+)\/?(?:[?#].*)?$/i;
+const VENUE_URL_RE = /^https:\/\/(?:www\.)?untappd\.com\/v\/([a-z0-9-]+)\/(\d+)\/?(?:[?#].*)?$/i;
+const USER_URL_RE = /^https:\/\/(?:www\.)?untappd\.com\/user\/([A-Za-z0-9._-]+)\/?(?:[?#].*)?$/i;
+const CHECKIN_URL_RE = /^https:\/\/(?:www\.)?untappd\.com\/user\/([A-Za-z0-9._-]+)\/checkin\/(\d+)\/?(?:[?#].*)?$/i;
+const VENUE_RSS_RE = /^https:\/\/(?:www\.)?untappd\.com\/rss\/venue\/(\d+)\/?(?:[?#].*)?$/i;
 
 function escapeHtml(str) {
   return String(str)
@@ -30,34 +38,113 @@ function normalizeWhitespace(text) {
     .trim();
 }
 
+/** Canonical HTTPS beer page — only from known slug + numeric id. */
+function beerUrl(slug, beerId) {
+  const s = String(slug || '').trim();
+  const id = String(beerId || '').trim();
+  if (!/^[a-z0-9-]+$/i.test(s) || !/^\d+$/.test(id)) return null;
+  return `https://${UNTAPPD_HOST}/b/${s}/${id}`;
+}
+
+function breweryUrl(slug, breweryId) {
+  const s = String(slug || '').trim();
+  const id = String(breweryId || '').trim();
+  if (!/^[a-z0-9-]+$/i.test(s) || !/^\d+$/.test(id)) return null;
+  return `https://${UNTAPPD_HOST}/w/${s}/${id}`;
+}
+
+function venueUrl(slug, venueId) {
+  const s = String(slug || '').trim();
+  const id = String(venueId || '').trim();
+  if (!/^[a-z0-9-]+$/i.test(s) || !/^\d+$/.test(id)) return null;
+  return `https://${UNTAPPD_HOST}/v/${s}/${id}`;
+}
+
+function userUrl(username) {
+  const u = String(username || '').trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(u)) return null;
+  return `https://${UNTAPPD_HOST}/user/${u}`;
+}
+
+function checkinUrl(username, checkinId) {
+  const u = String(username || '').trim();
+  const id = String(checkinId || '').trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(u) || !/^\d+$/.test(id)) return null;
+  return `https://${UNTAPPD_HOST}/user/${u}/checkin/${id}`;
+}
+
+function venueRssUrl(venueId) {
+  const id = String(venueId || '').trim();
+  if (!/^\d+$/.test(id)) return null;
+  return `https://${UNTAPPD_HOST}/rss/venue/${id}`;
+}
+
+function untappdSearchWebUrl(brewery, beer) {
+  const q = buildSearchQuery(brewery, beer);
+  const url = new URL(`https://${UNTAPPD_HOST}/search`);
+  url.searchParams.set('q', q || '');
+  url.searchParams.set('type', 'beer');
+  return url.href;
+}
+
 /**
- * Parse a public Untappd beer URL. Returns { slug, beerId, url } or null.
- * Never fabricates a URL — only accepts a real /b/{slug}/{id} form.
+ * Parse any supported public Untappd URL.
+ * Returns { type, ...fields, url } or null. Never fabricates missing parts.
  */
-function parseBeerUrl(input) {
+function parseUntappdUrl(input) {
   const raw = String(input || '').trim();
   if (!raw) return null;
-  let url;
+  let href;
   try {
-    url = new URL(raw);
+    const u = new URL(raw);
+    if (u.protocol !== 'https:') return null;
+    href = u.href;
   } catch {
     return null;
   }
-  if (url.protocol !== 'https:') return null;
-  const m = BEER_URL_RE.exec(url.href);
-  if (!m) return null;
-  const slug = m[1];
-  const beerId = m[2];
-  return {
-    slug,
-    beerId,
-    url: `https://untappd.com/b/${slug}/${beerId}`,
-  };
+
+  let m = CHECKIN_URL_RE.exec(href);
+  if (m) {
+    const url = checkinUrl(m[1], m[2]);
+    return url ? { type: 'checkin', username: m[1], checkinId: m[2], url } : null;
+  }
+  m = BEER_URL_RE.exec(href);
+  if (m) {
+    const url = beerUrl(m[1], m[2]);
+    return url ? { type: 'beer', slug: m[1], beerId: m[2], url } : null;
+  }
+  m = BREWERY_URL_RE.exec(href);
+  if (m) {
+    const url = breweryUrl(m[1], m[2]);
+    return url ? { type: 'brewery', slug: m[1], breweryId: m[2], url } : null;
+  }
+  m = VENUE_URL_RE.exec(href);
+  if (m) {
+    const url = venueUrl(m[1], m[2]);
+    return url ? { type: 'venue', slug: m[1], venueId: m[2], url } : null;
+  }
+  m = VENUE_RSS_RE.exec(href);
+  if (m) {
+    const url = venueRssUrl(m[1]);
+    return url ? { type: 'venue_rss', venueId: m[1], url } : null;
+  }
+  m = USER_URL_RE.exec(href);
+  if (m) {
+    const url = userUrl(m[1]);
+    return url ? { type: 'user', username: m[1], url } : null;
+  }
+  return null;
+}
+
+/** @deprecated use parseUntappdUrl — kept for beer-only callers/tests */
+function parseBeerUrl(input) {
+  const parsed = parseUntappdUrl(input);
+  if (!parsed || parsed.type !== 'beer') return null;
+  return { slug: parsed.slug, beerId: parsed.beerId, url: parsed.url };
 }
 
 /**
  * Turn OCR text into a best-effort { brewery, beer, details }.
- * Heuristic only — the UI always lets the user correct fields.
  */
 function parseLabelText(ocrText) {
   const text = normalizeWhitespace(ocrText);
@@ -89,7 +176,6 @@ function parseLabelText(ocrText) {
     detailLines.push(line);
   }
 
-  // If brewery wasn't tagged, use first substantial line as brewery and second as beer.
   if (!brewery && lines.length) {
     brewery = lines[0];
     if (!beer && lines[1]) beer = lines[1];
@@ -106,35 +192,47 @@ function parseLabelText(ocrText) {
   };
 }
 
+/**
+ * Parse spoken dictation into brewery / beer fields.
+ * Supports: "brewery X beer Y", "X, Y", or a single phrase.
+ */
+function parseVoiceBeerText(spoken) {
+  const text = normalizeWhitespace(spoken).replace(/\s+/g, ' ').trim();
+  if (!text) return { brewery: '', beer: '', raw: '' };
+
+  const labeled = text.match(
+    /^(?:brewery\s+)?(.+?)\s*[,\-–—]\s*(?:beer\s+)?(.+)$/i
+  ) || text.match(/^brewery\s+(.+?)\s+beer\s+(.+)$/i);
+
+  if (labeled) {
+    return {
+      brewery: labeled[1].replace(/^brewery\s+/i, '').trim(),
+      beer: labeled[2].replace(/^beer\s+/i, '').trim(),
+      raw: text,
+    };
+  }
+
+  return { brewery: '', beer: text, raw: text };
+}
+
 function buildSearchQuery(brewery, beer) {
   return [brewery, beer].map((s) => String(s || '').trim()).filter(Boolean).join(' ').trim();
 }
 
-function untappdSearchWebUrl(brewery, beer) {
-  const q = buildSearchQuery(brewery, beer);
-  const url = new URL('https://untappd.com/search');
-  url.searchParams.set('q', q || '');
-  url.searchParams.set('type', 'beer');
-  return url.href;
-}
-
-/**
- * Map an Untappd API beer item into a safe candidate. URL is built only from
- * API-provided beer_slug + bid (same fields Untappd uses publicly).
- */
 function candidateFromApiItem(item) {
   if (!item || item.bid == null) return null;
   const bid = String(item.bid);
   if (!/^\d+$/.test(bid)) return null;
   const slug = String(item.beer_slug || '').trim();
-  if (!slug || !/^[a-z0-9-]+$/i.test(slug)) return null;
+  const url = beerUrl(slug, bid);
+  if (!url) return null;
   const brewery = item.brewery && item.brewery.brewery_name
     ? String(item.brewery.brewery_name)
     : '';
   return {
     beerId: bid,
     slug,
-    url: `https://untappd.com/b/${slug}/${bid}`,
+    url,
     beerName: String(item.beer_name || ''),
     breweryName: brewery,
     style: String(item.beer_style || ''),
@@ -145,18 +243,75 @@ function candidateFromApiItem(item) {
 function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { proxyUrl: '' };
+    if (!raw) return { proxyUrl: '', aicheApiKey: '' };
     const parsed = JSON.parse(raw);
-    return { proxyUrl: String(parsed.proxyUrl || '').trim() };
+    return {
+      proxyUrl: String(parsed.proxyUrl || '').trim(),
+      aicheApiKey: String(parsed.aicheApiKey || '').trim(),
+    };
   } catch {
-    return { proxyUrl: '' };
+    return { proxyUrl: '', aicheApiKey: '' };
   }
 }
 
 function saveSettings(settings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({
     proxyUrl: String(settings.proxyUrl || '').trim(),
+    aicheApiKey: String(settings.aicheApiKey || '').trim(),
   }));
+}
+
+/**
+ * Batch AICHE transcription: multipart audio upload.
+ * Key must come from on-device settings — never hardcode.
+ */
+async function transcribeWithAiche(blob, apiKey, onStatus) {
+  if (!apiKey) throw new Error('Add your AICHE API key in Settings (stored on this device only).');
+  if (!blob || !blob.size) throw new Error('No audio captured.');
+
+  const form = new FormData();
+  const ext = (blob.type && blob.type.includes('mp4')) ? 'm4a'
+    : (blob.type && blob.type.includes('ogg')) ? 'ogg'
+      : 'webm';
+  form.append('audio', blob, `tappd-in.${ext}`);
+  form.append('language', 'auto');
+  form.append('message_ready', 'true');
+
+  if (onStatus) onStatus('Sending to AICHE…');
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  let res;
+  try {
+    res = await fetch(AICHE_TRANSCRIBE_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') throw new Error('AICHE request timed out.');
+    // Likely CORS or network — browser blocks cross-origin without Allow-Origin.
+    throw new Error(
+      'Could not reach AICHE from the browser (network or CORS). '
+      + 'Try again, or dictate with the AICHE app/hotkey into the fields below.'
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('AICHE rejected the API key. Check Settings.');
+    }
+    throw new Error(`AICHE error ${res.status}${body ? `: ${body.slice(0, 140)}` : ''}`);
+  }
+
+  const data = await res.json();
+  const text = String((data && data.text) || '').trim();
+  if (!text) throw new Error('AICHE returned empty text.');
+  return text;
 }
 
 function prefersReducedMotion() {
@@ -171,7 +326,6 @@ function setCollapsibleOpen(panel, open) {
       panel.classList.add('is-open');
       return;
     }
-    // Force reflow so the 0fr → 1fr transition runs.
     panel.classList.remove('is-open');
     void panel.offsetHeight;
     panel.classList.add('is-open');
@@ -192,17 +346,29 @@ function setCollapsibleOpen(panel, open) {
 
 window.TappdIn = {
   parseBeerUrl,
+  parseUntappdUrl,
   parseLabelText,
+  parseVoiceBeerText,
   buildSearchQuery,
   untappdSearchWebUrl,
+  beerUrl,
+  breweryUrl,
+  venueUrl,
+  userUrl,
+  checkinUrl,
+  venueRssUrl,
   candidateFromApiItem,
   normalizeWhitespace,
   escapeHtml,
+  transcribeWithAiche,
   BEER_URL_RE,
+  AICHE_TRANSCRIBE_URL,
 };
 
 // --- DOM wiring ---
 
+const voiceBtn = document.getElementById('voice-btn');
+const voiceStatus = document.getElementById('voice-status');
 const cameraBtn = document.getElementById('camera-btn');
 const libraryBtn = document.getElementById('library-btn');
 const cameraInput = document.getElementById('camera-input');
@@ -212,7 +378,6 @@ const preview = document.getElementById('preview');
 const clearPhotoBtn = document.getElementById('clear-photo-btn');
 const ocrStatus = document.getElementById('ocr-status');
 const recognizeBtn = document.getElementById('recognize-btn');
-const identifyPanel = document.getElementById('identify-panel');
 const breweryField = document.getElementById('brewery-field');
 const beerField = document.getElementById('beer-field');
 const detailsField = document.getElementById('details-field');
@@ -233,12 +398,17 @@ const manualSearchLink = document.getElementById('manual-search-link');
 const settingsToggle = document.getElementById('settings-toggle');
 const settingsPanel = document.getElementById('settings-panel');
 const proxyUrlInput = document.getElementById('proxy-url');
+const aicheKeyInput = document.getElementById('aiche-key');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
 const settingsStatus = document.getElementById('settings-status');
 
 let currentObjectUrl = null;
 let currentFile = null;
 let tesseractWorker = null;
+let mediaRecorder = null;
+let mediaStream = null;
+let audioChunks = [];
+let recording = false;
 
 function setHint(el, message, kind) {
   if (!el) return;
@@ -246,6 +416,16 @@ function setHint(el, message, kind) {
   el.textContent = message || '';
   el.classList.toggle('error', kind === 'error');
   el.classList.toggle('ok', kind === 'ok');
+}
+
+function applyParsedFields(parsed, sourceLabel) {
+  if (parsed.brewery) breweryField.value = parsed.brewery;
+  if (parsed.beer) beerField.value = parsed.beer;
+  if (parsed.details != null && parsed.details !== '') detailsField.value = parsed.details;
+  if (parsed.raw && rawOcrEl) {
+    rawOcrEl.textContent = `${sourceLabel}:\n${parsed.raw}`;
+  }
+  updateManualSearchLink();
 }
 
 function revokePreview() {
@@ -266,7 +446,7 @@ function setPhoto(file) {
   preview.src = currentObjectUrl;
   previewWrap.hidden = false;
   recognizeBtn.hidden = false;
-  setHint(ocrStatus, 'Photo ready — tap Identify beer.');
+  setHint(ocrStatus, 'Photo ready — tap Run OCR.');
 }
 
 function clearPhoto() {
@@ -291,6 +471,112 @@ libraryInput.addEventListener('change', () => {
   if (file) setPhoto(file);
 });
 clearPhotoBtn.addEventListener('click', clearPhoto);
+
+// --- Voice (batch AICHE) ---
+
+function pickRecorderMime() {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+  ];
+  if (typeof MediaRecorder === 'undefined') return '';
+  for (const c of candidates) {
+    if (MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return '';
+}
+
+async function startRecording() {
+  if (recording) return;
+  const settings = loadSettings();
+  if (!settings.aicheApiKey) {
+    setHint(voiceStatus, 'Add your AICHE API key in Settings first.', 'error');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setHint(voiceStatus, 'This browser has no microphone API.', 'error');
+    return;
+  }
+
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+    });
+  } catch {
+    setHint(voiceStatus, 'Microphone permission denied.', 'error');
+    return;
+  }
+
+  audioChunks = [];
+  const mime = pickRecorderMime();
+  mediaRecorder = mime
+    ? new MediaRecorder(mediaStream, { mimeType: mime })
+    : new MediaRecorder(mediaStream);
+
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size) audioChunks.push(e.data);
+  };
+
+  mediaRecorder.start();
+  recording = true;
+  voiceBtn.classList.add('is-recording');
+  voiceBtn.setAttribute('aria-pressed', 'true');
+  voiceBtn.textContent = 'Listening… tap to stop';
+  setHint(voiceStatus, 'Listening… tap again when finished.');
+}
+
+async function stopRecordingAndTranscribe() {
+  if (!recording || !mediaRecorder) return;
+  recording = false;
+  voiceBtn.classList.remove('is-recording');
+  voiceBtn.setAttribute('aria-pressed', 'false');
+  voiceBtn.textContent = 'Tap to speak';
+  voiceBtn.disabled = true;
+
+  const blob = await new Promise((resolve) => {
+    mediaRecorder.onstop = () => {
+      const type = mediaRecorder.mimeType || 'audio/webm';
+      resolve(new Blob(audioChunks, { type }));
+    };
+    mediaRecorder.stop();
+  });
+
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((t) => t.stop());
+    mediaStream = null;
+  }
+  mediaRecorder = null;
+
+  const settings = loadSettings();
+  try {
+    const text = await transcribeWithAiche(blob, settings.aicheApiKey, (msg) => {
+      setHint(voiceStatus, msg);
+    });
+    const parsed = parseVoiceBeerText(text);
+    applyParsedFields(parsed, 'AICHE');
+    setHint(
+      voiceStatus,
+      parsed.brewery || parsed.beer
+        ? 'Transcribed — check brewery & beer, then Find beer.'
+        : 'Got text — split brewery / beer if needed.',
+      'ok'
+    );
+  } catch (err) {
+    setHint(voiceStatus, err && err.message ? err.message : 'Transcription failed.', 'error');
+  } finally {
+    voiceBtn.disabled = false;
+  }
+}
+
+function onVoicePress(e) {
+  e.preventDefault();
+  if (recording) stopRecordingAndTranscribe();
+  else startRecording();
+}
+
+voiceBtn.addEventListener('click', onVoicePress);
 
 async function recognizeWithTextDetector(bitmap) {
   if (typeof TextDetector !== 'function') return null;
@@ -325,7 +611,6 @@ async function recognizeWithTesseract(file, onProgress) {
 }
 
 async function downscaleForOcr(file) {
-  // Keep OCR snappy on phones — max edge 1600px.
   try {
     const bitmap = await createImageBitmap(file);
     const maxEdge = 1600;
@@ -370,17 +655,12 @@ recognizeBtn.addEventListener('click', async () => {
     if (bitmap && typeof bitmap.close === 'function') bitmap.close();
 
     const parsed = parseLabelText(text);
-    breweryField.value = parsed.brewery;
-    beerField.value = parsed.beer;
-    detailsField.value = parsed.details;
-    rawOcrEl.textContent = parsed.raw || '(no text detected)';
-    identifyPanel.hidden = false;
-    updateManualSearchLink();
+    applyParsedFields(parsed, engine);
     setHint(
       ocrStatus,
       parsed.raw
-        ? `Identified with ${engine}. Check brewery & beer, then Find on Untappd.`
-        : 'No text found — type the brewery and beer name manually.',
+        ? `OCR via ${engine}. Check fields — OCR is often weak on can art.`
+        : 'No text found — use voice instead.',
       parsed.raw ? 'ok' : 'error'
     );
   } catch (err) {
@@ -466,7 +746,6 @@ async function searchUntappdViaProxy(query, proxyUrl) {
   }
 
   const data = await res.json();
-  // Support either our worker shape { beers: [...] } or raw Untappd { response: { beers: { items } } }.
   let items = [];
   if (Array.isArray(data.beers)) {
     items = data.beers;
@@ -495,19 +774,19 @@ searchBtn.addEventListener('click', async () => {
     resultsPanel.hidden = true;
     setHint(
       searchStatus,
-      'No search proxy configured. Use “Search Untappd ↗”, then paste the beer URL below — or add a proxy in Settings.',
+      'Automatic beer lookup is not wired yet. Temporary fallback: paste an Untappd beer URL below, or add a search proxy in Settings.',
       'error'
     );
     return;
   }
 
   searchBtn.disabled = true;
-  setHint(searchStatus, 'Searching Untappd…');
+  setHint(searchStatus, 'Searching…');
   try {
     const candidates = await searchUntappdViaProxy(query, settings.proxyUrl);
     if (!candidates.length) {
       renderResults([]);
-      setHint(searchStatus, 'No matches returned. Try editing the names or paste a URL.', 'error');
+      setHint(searchStatus, 'No matches returned. Try editing the names.', 'error');
       return;
     }
     renderResults(candidates);
@@ -548,6 +827,7 @@ applyPasteBtn.addEventListener('click', () => {
 // Settings
 const initialSettings = loadSettings();
 proxyUrlInput.value = initialSettings.proxyUrl;
+aicheKeyInput.value = initialSettings.aicheApiKey;
 
 settingsToggle.addEventListener('click', () => {
   const opening = settingsToggle.getAttribute('aria-expanded') !== 'true';
@@ -557,6 +837,7 @@ settingsToggle.addEventListener('click', () => {
 
 saveSettingsBtn.addEventListener('click', () => {
   const proxyUrl = proxyUrlInput.value.trim();
+  const aicheApiKey = aicheKeyInput.value.trim();
   if (proxyUrl) {
     try {
       const u = new URL(proxyUrl);
@@ -569,8 +850,12 @@ saveSettingsBtn.addEventListener('click', () => {
       return;
     }
   }
-  saveSettings({ proxyUrl });
-  setHint(settingsStatus, 'Settings saved on this device.', 'ok');
+  if (aicheApiKey && !/^sk_/i.test(aicheApiKey)) {
+    setHint(settingsStatus, 'AICHE keys usually start with sk_ — double-check before saving.', 'error');
+    return;
+  }
+  saveSettings({ proxyUrl, aicheApiKey });
+  setHint(settingsStatus, 'Saved on this device only.', 'ok');
 });
 
 // --- Version badge ---
@@ -602,8 +887,6 @@ updatedBadge.addEventListener('click', () => {
   setCollapsibleOpen(whatsNewEl, opening);
   updatedBadge.setAttribute('aria-expanded', opening ? 'true' : 'false');
 });
-
-// --- Service worker ---
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -702,7 +985,7 @@ async function triggerPullRefresh() {
       }
     }
   } catch {
-    // fall through to reload
+    // fall through
   }
   window.location.reload();
 }
