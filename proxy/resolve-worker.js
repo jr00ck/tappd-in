@@ -72,11 +72,11 @@ function parseUntappdBeerUrl(input) {
   if (!raw) return null;
   let url;
   try {
-    url = new URL(raw);
+    url = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
   } catch {
     return null;
   }
-  if (url.protocol !== 'https:') return null;
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
   const host = url.hostname.replace(/^www\./i, '').toLowerCase();
   if (host !== 'untappd.com') return null;
   const m = BEER_PATH_RE.exec(url.pathname);
@@ -86,6 +86,19 @@ function parseUntappdBeerUrl(input) {
     id: m[2],
     url: `https://untappd.com/b/${m[1].toLowerCase()}/${m[2]}`,
   };
+}
+
+/** Pull /b/slug/id links out of titles/snippets when the result URL itself isn't a beer page. */
+function extractBeerUrlsFromText(...parts) {
+  const text = parts.filter(Boolean).join(' ');
+  const found = [];
+  const re = /https?:\/\/(?:www\.)?untappd\.com\/b\/[a-z0-9-]+\/\d+/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const parsed = parseUntappdBeerUrl(m[0]);
+    if (parsed) found.push(parsed);
+  }
+  return found;
 }
 
 function slugToWords(slug) {
@@ -127,7 +140,8 @@ function untappdSearchWebUrl(brewery, beer) {
  * @returns {Promise<Array<{ title: string, url: string, snippet?: string }>>}
  */
 async function searchUntappdPages(apiKey, brewery, beer) {
-  const query = `${brewery} ${beer} untappd`.trim();
+  // Bias toward beer pages; domain filter still restricts to untappd.com
+  const query = `${brewery} ${beer} site:untappd.com/b`.trim();
   const res = await fetch(PERPLEXITY_SEARCH, {
     method: 'POST',
     headers: {
@@ -159,20 +173,30 @@ async function searchUntappdPages(apiKey, brewery, beer) {
 }
 
 function buildResolveResponse(brewery, beer, pages) {
-  const scored = [];
+  const byUrl = new Map();
+  const consider = (parsed, title) => {
+    if (!parsed) return;
+    const score = scoreCandidate(brewery, beer, parsed, title);
+    const prev = byUrl.get(parsed.url);
+    if (!prev || score > prev.score) {
+      byUrl.set(parsed.url, {
+        url: parsed.url,
+        id: parsed.id,
+        slug: parsed.slug,
+        title: title || parsed.slug,
+        score: Math.round(score * 1000) / 1000,
+      });
+    }
+  };
+
   for (const page of pages) {
-    const parsed = parseUntappdBeerUrl(page.url);
-    if (!parsed) continue;
-    const score = scoreCandidate(brewery, beer, parsed, page.title);
-    scored.push({
-      url: parsed.url,
-      id: parsed.id,
-      slug: parsed.slug,
-      title: page.title || parsed.slug,
-      score: Math.round(score * 1000) / 1000,
-    });
+    consider(parseUntappdBeerUrl(page.url), page.title);
+    for (const parsed of extractBeerUrlsFromText(page.title, page.snippet, page.url)) {
+      consider(parsed, page.title);
+    }
   }
-  scored.sort((a, b) => b.score - a.score);
+
+  const scored = [...byUrl.values()].sort((a, b) => b.score - a.score);
   const best = scored[0] || null;
   const second = scored[1];
   const confident = !!(
@@ -181,11 +205,17 @@ function buildResolveResponse(brewery, beer, pages) {
     && (!second || best.score - second.score >= 0.08 || best.score >= 0.9)
   );
   return {
-    best: confident ? best : best,
+    best,
     candidates: scored.slice(0, 5),
     confident,
     untappdSearchUrl: untappdSearchWebUrl(brewery, beer),
     query: { brewery, beer },
+    // Diagnostic only — helps tune when candidates stay empty
+    meta: {
+      providerResults: pages.length,
+      beerUrlsFound: scored.length,
+      sampleProviderUrls: pages.slice(0, 5).map((p) => p.url),
+    },
   };
 }
 

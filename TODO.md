@@ -22,3 +22,9 @@
 - Confirm Perplexity free-tier cost at real usage
 - Optional Cloudflare KV cache sync across devices
 - Resume voice/OCR later if useful
+
+## Secrets / cleanup later
+
+- Worker `tappd-in-catalog` may still have unused secret `CATALOG_BEER_API_KEY` (Catalog.beer path parked).
+  Safe to delete when convenient: `npx wrangler@latest secret delete CATALOG_BEER_API_KEY` (from `proxy/`).
+  Active secret: `PERPLEXITY_API_KEY`.

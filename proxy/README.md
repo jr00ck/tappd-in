@@ -14,11 +14,9 @@ npx wrangler@latest deploy
 npx wrangler@latest secret put PERPLEXITY_API_KEY
 ```
 
-Optional cleanup (no longer used):
+Unused (Catalog.beer parked — delete later if desired, not required for MVP):
 
-```bash
-npx wrangler@latest secret delete CATALOG_BEER_API_KEY
-```
+`CATALOG_BEER_API_KEY` may still exist on this Worker. Active secret is `PERPLEXITY_API_KEY`.
 
 `GET /resolve?brewery=Finback&beer=Something+Mosaic`
 
