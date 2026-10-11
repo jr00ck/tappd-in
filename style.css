@@ -180,6 +180,7 @@ main {
 
 input[type="text"],
 input[type="url"],
+input[type="password"],
 textarea {
   width: 100%;
   background: #12100e;
@@ -198,7 +199,9 @@ textarea {
   line-height: 1.4;
 }
 
-input:focus,
+input[type="text"]:focus,
+input[type="url"]:focus,
+input[type="password"]:focus,
 textarea:focus {
   border-color: var(--accent);
   outline: none;
