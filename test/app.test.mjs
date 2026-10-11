@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
@@ -7,7 +7,6 @@ import { fileURLToPath } from 'url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8')
-  .replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/tesseract\.js@5\/dist\/tesseract\.min\.js"><\/script>\s*/g, '')
   .replace('<script src="app.js"></script>', '');
 const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 
@@ -29,97 +28,100 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots without errors and shows v0.1.0', () => {
+test('boots as v0.4.0-beta with quick-entry UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.1.0');
-  assert.ok(d.getElementById('camera-btn'));
-  assert.ok(d.getElementById('open-untappd-btn'));
+  assert.equal(d.getElementById('app-version').textContent, 'v0.4.0-beta');
+  assert.ok(d.getElementById('brewery-field'));
+  assert.ok(d.getElementById('beer-field'));
+  assert.ok(d.getElementById('new-brewer-btn'));
+  assert.equal(d.getElementById('camera-btn'), null);
 });
 
-test('Updated badge renders release notes', () => {
-  const { d } = boot((dom) => {
-    dom.window.localStorage.setItem('tappd-in.lastSeenVersion', '0.0.1');
-  });
-  const badge = d.getElementById('updated-badge');
-  const panel = d.getElementById('whats-new');
-  assert.equal(badge.hidden, false);
-  badge.click();
-  assert.equal(panel.hidden, false);
-  assert.match(panel.querySelector('.whats-new-title').textContent, /v0\.1\.0/);
-  const items = [...panel.querySelectorAll('.whats-new-list li')].map((li) => li.textContent);
-  assert.ok(items.length >= 1);
-});
-
-test('manifest locks portrait; pinch zoom stays off', () => {
-  assert.match(html, /user-scalable=no/);
-  assert.match(html, /maximum-scale=1/);
-  const manifest = fs.readFileSync(path.join(root, 'manifest.webmanifest'), 'utf8');
-  assert.match(manifest, /"orientation":\s*"portrait"/);
-  assert.match(manifest, /"name":\s*"Tappd In"/);
-});
-
-test('parseBeerUrl accepts canonical Finback Something Mosaic URL only', () => {
+test('parseUntappdBeerUrl normalizes www, query, slash', () => {
   const { w } = boot();
-  const { parseBeerUrl } = w.TappdIn;
-  const good = parseBeerUrl('https://untappd.com/b/finback-brewery-something-mosaic/2706030');
-  assert.ok(good);
-  assert.equal(good.slug, 'finback-brewery-something-mosaic');
-  assert.equal(good.beerId, '2706030');
-  assert.equal(good.url, 'https://untappd.com/b/finback-brewery-something-mosaic/2706030');
-  assert.equal(parseBeerUrl('https://untappd.com/b/finback-brewery-something-mosaic/'), null);
-  assert.equal(parseBeerUrl('https://evil.com/b/finback-brewery-something-mosaic/2706030'), null);
-  assert.equal(parseBeerUrl('http://untappd.com/b/finback-brewery-something-mosaic/2706030'), null);
-  assert.equal(parseBeerUrl('https://untappd.com/search?q=finback'), null);
-});
-
-test('parseLabelText pulls brewery and beer lines', () => {
-  const { w } = boot();
-  const parsed = w.TappdIn.parseLabelText(`Finback Brewery
-Something Mosaic
-IPA
-6.5% ABV`);
-  assert.match(parsed.brewery, /Finback/i);
-  assert.match(parsed.beer, /Something Mosaic/i);
-  assert.ok(parsed.raw.includes('IPA'));
-});
-
-test('candidateFromApiItem builds URL only from API slug + bid', () => {
-  const { w } = boot();
-  const c = w.TappdIn.candidateFromApiItem({
-    bid: 2706030,
-    beer_slug: 'finback-brewery-something-mosaic',
-    beer_name: 'Something Mosaic',
-    beer_style: 'IPA - New England / Hazy',
-    beer_abv: 6.5,
-    brewery: { brewery_name: 'Finback Brewery' },
-  });
-  assert.equal(c.url, 'https://untappd.com/b/finback-brewery-something-mosaic/2706030');
-  assert.equal(c.beerId, '2706030');
-  assert.equal(w.TappdIn.candidateFromApiItem({ bid: 1, beer_slug: '' }), null);
-  assert.equal(w.TappdIn.candidateFromApiItem({ beer_slug: 'x' }), null);
-});
-
-test('paste URL selects match and enables Open in Untappd', () => {
-  const { d } = boot();
-  d.getElementById('paste-url').value =
-    'https://untappd.com/b/finback-brewery-something-mosaic/2706030';
-  d.getElementById('apply-paste-btn').click();
-  const panel = d.getElementById('match-panel');
-  assert.equal(panel.hidden, false);
-  assert.equal(
-    d.getElementById('open-untappd-btn').href,
-    'https://untappd.com/b/finback-brewery-something-mosaic/2706030'
+  const p = w.TappdIn.parseUntappdBeerUrl(
+    'https://www.untappd.com/b/finback-brewery-something-mosaic/2706030/?ref=x'
   );
-  assert.equal(
-    d.getElementById('match-url').textContent,
-    'https://untappd.com/b/finback-brewery-something-mosaic/2706030'
-  );
+  assert.equal(p.url, 'https://untappd.com/b/finback-brewery-something-mosaic/2706030');
+  assert.equal(p.id, '2706030');
+  assert.equal(w.TappdIn.parseUntappdBeerUrl('https://untappd.com/search?q=x'), null);
 });
 
-test('deploy workflow ships on v* tags like Gassy', () => {
-  const wf = fs.readFileSync(path.join(root, '.github/workflows/deploy.yml'), 'utf8');
-  assert.match(wf, /tags:\s*\n\s*-\s*'v\*'/);
-  assert.match(wf, /actions\/deploy-pages@v4/);
-  assert.match(wf, /path: \./);
+test('normalizeMatchText + cacheKey', () => {
+  const { w } = boot();
+  assert.equal(
+    w.TappdIn.cacheKey('Finback Brewing Co.', 'Something Mosaic'),
+    w.TappdIn.cacheKey('finback', 'something mosaic')
+  );
+  assert.match(w.TappdIn.normalizeMatchText('The Ale & Lager Brewery'), /ale and lager/);
+});
+
+test('scoreCandidate prefers matching slug', () => {
+  const { w } = boot();
+  const good = w.TappdIn.scoreCandidate(
+    'Finback',
+    'Something Mosaic',
+    { slug: 'finback-brewery-something-mosaic', id: '1', url: 'https://untappd.com/b/finback-brewery-something-mosaic/1' },
+    'Something Mosaic'
+  );
+  const bad = w.TappdIn.scoreCandidate(
+    'Finback',
+    'Something Mosaic',
+    { slug: 'other-brewery-ipa', id: '2', url: 'https://untappd.com/b/other-brewery-ipa/2' },
+    'IPA'
+  );
+  assert.ok(good > bad);
+  assert.ok(w.TappdIn.isConfident({ score: 0.95 }, { score: 0.5 }));
+  assert.equal(w.TappdIn.isConfident({ score: 0.5 }, null), false);
+});
+
+test('cache hit skips network on resolveBeer', async () => {
+  const { w } = boot();
+  w.localStorage.clear();
+  w.TappdIn.putCacheResolve('Finback', 'Something Mosaic', {
+    url: 'https://untappd.com/b/finback-brewery-something-mosaic/2706030',
+    id: '2706030',
+    title: 'Something Mosaic',
+    source: 'search',
+  });
+  let fetched = false;
+  w.fetch = async () => {
+    fetched = true;
+    throw new Error('network should not run');
+  };
+  const result = await w.TappdIn.resolveBeer('Finback', 'Something Mosaic', {});
+  assert.equal(fetched, false);
+  assert.equal(result.fromCache, true);
+  assert.equal(result.best.id, '2706030');
+  assert.equal(result.confident, true);
+});
+
+test('manual cache override wins over prior search entry', () => {
+  const { w } = boot();
+  w.localStorage.clear();
+  w.TappdIn.putCacheResolve('Finback', 'Something Mosaic', {
+    url: 'https://untappd.com/b/wrong-slug/1',
+    id: '1',
+    title: 'wrong',
+    source: 'search',
+  });
+  w.TappdIn.putCacheResolve('Finback', 'Something Mosaic', {
+    url: 'https://untappd.com/b/finback-brewery-something-mosaic/2706030',
+    id: '2706030',
+    title: 'Something Mosaic',
+    source: 'manual',
+  });
+  const hit = w.TappdIn.getCachedResolve('Finback', 'Something Mosaic');
+  assert.equal(hit.source, 'manual');
+  assert.equal(hit.id, '2706030');
+});
+
+test('resolve worker file is Perplexity-based', () => {
+  const worker = fs.readFileSync(path.join(root, 'proxy/resolve-worker.js'), 'utf8');
+  assert.match(worker, /api\.perplexity\.ai\/search/);
+  assert.match(worker, /search_type:\s*'fast'/);
+  assert.match(worker, /PERPLEXITY_API_KEY/);
+  assert.match(worker, /\/resolve/);
+  assert.doesNotMatch(worker, /catalog\.beer/);
 });

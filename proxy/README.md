@@ -1,19 +1,29 @@
-# Untappd search proxy
+# Proxies for Tappd In
 
-Static GitHub Pages cannot call `api.untappd.com` from the browser (no CORS), and embedding `client_secret` in a public PWA would be unsafe.
+| Worker | Purpose |
+|--------|---------|
+| `resolve-worker.js` | **MVP** — Untappd URL resolve via Perplexity Search |
+| `worker.js` | Untappd official API search (optional, parked) |
 
-`worker.js` is a small **Cloudflare Worker** that:
+Catalog.beer proxy code lives on branch `feat/catalog-beer-search` (parked).
 
-1. Holds your Untappd app credentials as Worker secrets
-2. Forwards `GET /search?q=…` to Untappd’s official `/v4/search/beer`
-3. Returns a compact JSON list of beers (slug + bid only from the API)
+## Untappd resolver (`resolve-worker.js`)
 
-## Setup
+```bash
+npx wrangler@latest deploy
+npx wrangler@latest secret put PERPLEXITY_API_KEY
+```
 
-1. Apply for an Untappd API app at https://untappd.com/api (approval is not instant or guaranteed).
-2. Deploy `worker.js` as a Cloudflare Worker.
-3. Set secrets `UNTAPPD_CLIENT_ID` and `UNTAPPD_CLIENT_SECRET`.
-4. Optionally set `ALLOWED_ORIGIN` to `https://jr00ck.github.io`.
-5. In the PWA: **Settings → Search proxy URL** → `https://<your-worker>/search`
+Optional cleanup (no longer used):
 
-Without a proxy, Tappd In still works: identify the label, open Untappd’s public search, paste the canonical beer URL. The app **never invents** `/b/…/id` links.
+```bash
+npx wrangler@latest secret delete CATALOG_BEER_API_KEY
+```
+
+`GET /resolve?brewery=Finback&beer=Something+Mosaic`
+
+Deployed:
+
+`https://tappd-in-catalog.rerun-cost-xbox.workers.dev/resolve`
+
+Protection: Worker secret + `SEARCH_LIMITER` (30/min/IP) + CORS allowlist (Pages + localhost).

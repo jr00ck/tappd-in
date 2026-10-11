@@ -1,0 +1,19 @@
+name = "tappd-in-catalog"
+main = "resolve-worker.js"
+compatibility_date = "2024-11-01"
+workers_dev = true
+
+# Deploy with a current CLI so [[ratelimits]] applies:
+#   npx wrangler@latest deploy
+#   npx wrangler@latest secret put PERPLEXITY_API_KEY
+
+[vars]
+ALLOWED_ORIGIN = "https://jr00ck.github.io"
+
+[[ratelimits]]
+name = "SEARCH_LIMITER"
+namespace_id = "7101"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60

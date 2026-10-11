@@ -1,4 +1,4 @@
-const CACHE = 'tappd-in-v0.1.0';
+const CACHE = 'tappd-in-v0.4.0-beta';
 const ASSETS = [
   './',
   './index.html',
@@ -12,7 +12,7 @@ const ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS))
+    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
   );
 });
 
@@ -28,10 +28,13 @@ self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
-// Network-first for same-origin GET. Offline or hung request → cache.
 const NETWORK_TIMEOUT_MS = 8000;
 
 function fetchWithTimeout(request) {
+  // Avoid AbortController on navigate — Safari PWA can abort first paint.
+  if (request.mode === 'navigate') {
+    return fetch(request);
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), NETWORK_TIMEOUT_MS);
   return fetch(request, { signal: ctrl.signal }).finally(() => clearTimeout(timer));

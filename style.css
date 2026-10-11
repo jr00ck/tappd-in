@@ -445,3 +445,129 @@ textarea:focus {
 #app-content {
   transition: transform 0.2s ease;
 }
+
+/* Quick-entry session */
+.brewery-field-wrap input {
+  font-size: 1.15rem;
+  min-height: 52px;
+  font-weight: 600;
+}
+
+#beer-field {
+  min-height: 52px;
+  font-size: 1.05rem;
+}
+
+.clear-session {
+  display: inline-block;
+  margin-top: 12px;
+  padding-left: 0;
+}
+
+.session-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.brewer-group {
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 0 12px 8px;
+  background: #12100e;
+}
+
+.brewer-summary {
+  cursor: pointer;
+  padding: 14px 4px;
+  font-weight: 700;
+  font-size: 1.05rem;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.brewer-summary::-webkit-details-marker { display: none; }
+
+.beer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.beer-row {
+  border-top: 1px solid var(--card-border);
+  padding: 12px 4px 4px;
+}
+
+.beer-row-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.beer-link {
+  display: inline-block;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 1.05rem;
+  min-height: 44px;
+  line-height: 44px;
+  text-decoration: none;
+}
+
+.beer-link:hover { text-decoration: underline; }
+
+.had-toggle {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
+
+.cand-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cand-btn {
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 12px;
+  font: inherit;
+  cursor: pointer;
+  min-height: 48px;
+}
+
+.cand-btn .hint {
+  display: block;
+  word-break: break-all;
+  margin: 4px 0 0;
+}
+
+.fix-link {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.hint-error { color: var(--danger); }
+.hint-ok { color: var(--ok); }
