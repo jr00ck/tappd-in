@@ -4,12 +4,14 @@ const SETTINGS_KEY = 'tappd-in.settings';
 const LAST_SEEN_KEY = 'tappd-in.lastSeenVersion';
 const AICHE_TRANSCRIBE_URL = 'https://api.aiche.app/v1/transcribe';
 
-const APP_VERSION = '0.2.0-beta';
+const APP_VERSION = '0.3.0-beta';
 const RELEASE_NOTES = [
-  'Voice-first: batch AICHE transcription with API key stored only on-device',
-  'Public Untappd URL helpers for beer, brewery, user, check-in, venue, search, RSS',
-  'Photo OCR demoted to an optional panel',
+  'Catalog.beer search from typed brewery + beer (primary MVP path)',
+  'Optional Cloudflare proxy for Catalog.beer CORS; Untappd search handoff',
+  'Voice / OCR kept as optional panels',
 ];
+
+const CATALOG_API_SEARCH = 'https://api.catalog.beer/beer/search';
 
 // --- Public Untappd URL shapes (https only; never invent IDs/slugs) ---
 
@@ -230,6 +232,7 @@ function candidateFromApiItem(item) {
     ? String(item.brewery.brewery_name)
     : '';
   return {
+    source: 'untappd',
     beerId: bid,
     slug,
     url,
@@ -240,17 +243,66 @@ function candidateFromApiItem(item) {
   };
 }
 
+/** Catalog.beer public beer page — only from a real UUID returned by the API. */
+function catalogBeerPageUrl(id) {
+  const uuid = String(id || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)) {
+    return null;
+  }
+  return `https://catalog.beer/beer/${uuid}`;
+}
+
+/**
+ * Map a Catalog.beer beer object (or our proxy compact shape) into a UI candidate.
+ * Never invents Untappd URLs — those stay a separate search handoff.
+ */
+function candidateFromCatalogItem(item) {
+  if (!item || !item.id) return null;
+  const catalogUrl = item.catalogUrl || catalogBeerPageUrl(item.id);
+  if (!catalogUrl) return null;
+  const brewer = item.brewer || {};
+  return {
+    source: 'catalog',
+    id: String(item.id),
+    beerName: String(item.name || ''),
+    breweryName: String(brewer.name || ''),
+    style: String(item.style || ''),
+    abv: item.abv != null ? Number(item.abv) : null,
+    ibu: item.ibu != null ? Number(item.ibu) : null,
+    description: String(item.description || ''),
+    match: String(item.match || ''),
+    catalogUrl,
+    url: catalogUrl,
+  };
+}
+
+function catalogBasicAuthHeader(apiKey) {
+  // btoa is fine for typical API key charset; Catalog.beer keys are ASCII.
+  return `Basic ${btoa(`${apiKey}:`)}`;
+}
+
+function emptySettings() {
+  return {
+    proxyUrl: '',
+    aicheApiKey: '',
+    catalogApiKey: '',
+    catalogProxyUrl: '',
+  };
+}
+
 function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { proxyUrl: '', aicheApiKey: '' };
+    if (!raw) return emptySettings();
     const parsed = JSON.parse(raw);
     return {
       proxyUrl: String(parsed.proxyUrl || '').trim(),
       aicheApiKey: String(parsed.aicheApiKey || '').trim(),
+      catalogApiKey: String(parsed.catalogApiKey || '').trim(),
+      catalogProxyUrl: String(parsed.catalogProxyUrl || '').trim(),
     };
   } catch {
-    return { proxyUrl: '', aicheApiKey: '' };
+    return emptySettings();
   }
 }
 
@@ -258,6 +310,8 @@ function saveSettings(settings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({
     proxyUrl: String(settings.proxyUrl || '').trim(),
     aicheApiKey: String(settings.aicheApiKey || '').trim(),
+    catalogApiKey: String(settings.catalogApiKey || '').trim(),
+    catalogProxyUrl: String(settings.catalogProxyUrl || '').trim(),
   }));
 }
 
@@ -357,12 +411,15 @@ window.TappdIn = {
   userUrl,
   checkinUrl,
   venueRssUrl,
+  catalogBeerPageUrl,
   candidateFromApiItem,
+  candidateFromCatalogItem,
   normalizeWhitespace,
   escapeHtml,
   transcribeWithAiche,
   BEER_URL_RE,
   AICHE_TRANSCRIBE_URL,
+  CATALOG_API_SEARCH,
 };
 
 // --- DOM wiring ---
@@ -390,6 +447,7 @@ const matchPanel = document.getElementById('match-panel');
 const matchTitle = document.getElementById('match-title');
 const matchMeta = document.getElementById('match-meta');
 const matchUrl = document.getElementById('match-url');
+const openCatalogBtn = document.getElementById('open-catalog-btn');
 const openUntappdBtn = document.getElementById('open-untappd-btn');
 const pasteUrl = document.getElementById('paste-url');
 const applyPasteBtn = document.getElementById('apply-paste-btn');
@@ -399,6 +457,8 @@ const settingsToggle = document.getElementById('settings-toggle');
 const settingsPanel = document.getElementById('settings-panel');
 const proxyUrlInput = document.getElementById('proxy-url');
 const aicheKeyInput = document.getElementById('aiche-key');
+const catalogKeyInput = document.getElementById('catalog-key');
+const catalogProxyUrlInput = document.getElementById('catalog-proxy-url');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
 const settingsStatus = document.getElementById('settings-status');
 
@@ -678,6 +738,34 @@ breweryField.addEventListener('input', updateManualSearchLink);
 beerField.addEventListener('input', updateManualSearchLink);
 
 function selectMatch(candidate, titleOverride) {
+  if (candidate.source === 'catalog' || candidate.catalogUrl) {
+    const catalogUrl = candidate.catalogUrl || catalogBeerPageUrl(candidate.id);
+    if (!catalogUrl) {
+      setHint(searchStatus, 'Refusing an invalid Catalog.beer id.', 'error');
+      return;
+    }
+    const title = titleOverride
+      || [candidate.breweryName, candidate.beerName].filter(Boolean).join(' — ')
+      || candidate.beerName;
+    matchTitle.textContent = title;
+    const bits = [];
+    if (candidate.style) bits.push(candidate.style);
+    if (candidate.abv != null && !Number.isNaN(candidate.abv)) bits.push(`${candidate.abv}% ABV`);
+    if (candidate.ibu != null && !Number.isNaN(candidate.ibu)) bits.push(`${candidate.ibu} IBU`);
+    matchMeta.textContent = bits.join(' · ');
+    matchUrl.href = catalogUrl;
+    matchUrl.textContent = catalogUrl;
+    if (openCatalogBtn) {
+      openCatalogBtn.href = catalogUrl;
+      openCatalogBtn.hidden = false;
+    }
+    openUntappdBtn.href = untappdSearchWebUrl(candidate.breweryName, candidate.beerName);
+    openUntappdBtn.textContent = 'Search on Untappd';
+    matchPanel.hidden = false;
+    matchPanel.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+    return;
+  }
+
   const parsed = parseBeerUrl(candidate.url);
   if (!parsed) {
     setHint(searchStatus, 'Refusing an invalid Untappd URL.', 'error');
@@ -694,10 +782,14 @@ function selectMatch(candidate, titleOverride) {
   matchMeta.textContent = bits.join(' · ');
   matchUrl.href = parsed.url;
   matchUrl.textContent = parsed.url;
+  if (openCatalogBtn) openCatalogBtn.hidden = true;
   openUntappdBtn.href = parsed.url;
+  openUntappdBtn.textContent = 'Open in Untappd';
   matchPanel.hidden = false;
   matchPanel.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
 }
+
+window.TappdIn.selectMatch = selectMatch;
 
 function renderResults(candidates) {
   resultsList.innerHTML = '';
@@ -722,40 +814,67 @@ function renderResults(candidates) {
   }
 }
 
-async function searchUntappdViaProxy(query, proxyUrl) {
-  const endpoint = new URL(proxyUrl);
-  endpoint.searchParams.set('q', query);
-  endpoint.searchParams.set('limit', '10');
-
+async function searchCatalogBeer(query, settings) {
+  const count = 10;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   let res;
+
   try {
-    res = await fetch(endpoint.href, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal: ctrl.signal,
-    });
+    if (settings.catalogProxyUrl) {
+      const endpoint = new URL(settings.catalogProxyUrl);
+      endpoint.searchParams.set('q', query);
+      endpoint.searchParams.set('count', String(count));
+      const headers = { Accept: 'application/json' };
+      if (settings.catalogApiKey) {
+        headers.Authorization = catalogBasicAuthHeader(settings.catalogApiKey);
+      }
+      res = await fetch(endpoint.href, { method: 'GET', headers, signal: ctrl.signal });
+    } else if (settings.catalogApiKey) {
+      const endpoint = new URL(CATALOG_API_SEARCH);
+      endpoint.searchParams.set('q', query);
+      endpoint.searchParams.set('count', String(count));
+      res = await fetch(endpoint.href, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: catalogBasicAuthHeader(settings.catalogApiKey),
+        },
+        signal: ctrl.signal,
+      });
+    } else {
+      throw new Error(
+        'Add a Catalog.beer API key in Settings (and a proxy URL if the browser blocks CORS).'
+      );
+    }
+  } catch (err) {
+    if (err && err.message && err.message.startsWith('Add a Catalog')) throw err;
+    if (err && err.name === 'AbortError') throw err;
+    throw new Error(
+      'Could not reach Catalog.beer (network or CORS). '
+      + 'Deploy proxy/catalog-worker.js and set Catalog.beer proxy URL in Settings.'
+    );
   } finally {
     clearTimeout(timer);
   }
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Proxy returned ${res.status}${body ? `: ${body.slice(0, 120)}` : ''}`);
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('Catalog.beer rejected the API key. Check Settings.');
+    }
+    throw new Error(`Catalog.beer error ${res.status}${body ? `: ${body.slice(0, 120)}` : ''}`);
   }
 
   const data = await res.json();
   let items = [];
   if (Array.isArray(data.beers)) {
     items = data.beers;
-  } else if (data.response && data.response.beers && Array.isArray(data.response.beers.items)) {
-    items = data.response.beers.items.map((row) => row.beer
-      ? { ...row.beer, brewery: row.brewery || row.beer.brewery }
-      : row);
+  } else if (Array.isArray(data.data)) {
+    items = data.data;
   }
 
-  return items.map(candidateFromApiItem).filter(Boolean);
+  return items.map(candidateFromCatalogItem).filter(Boolean);
 }
 
 searchBtn.addEventListener('click', async () => {
@@ -770,23 +889,13 @@ searchBtn.addEventListener('click', async () => {
   }
 
   const settings = loadSettings();
-  if (!settings.proxyUrl) {
-    resultsPanel.hidden = true;
-    setHint(
-      searchStatus,
-      'Automatic beer lookup is not wired yet. Temporary fallback: paste an Untappd beer URL below, or add a search proxy in Settings.',
-      'error'
-    );
-    return;
-  }
-
   searchBtn.disabled = true;
-  setHint(searchStatus, 'Searching…');
+  setHint(searchStatus, 'Searching Catalog.beer…');
   try {
-    const candidates = await searchUntappdViaProxy(query, settings.proxyUrl);
+    const candidates = await searchCatalogBeer(query, settings);
     if (!candidates.length) {
       renderResults([]);
-      setHint(searchStatus, 'No matches returned. Try editing the names.', 'error');
+      setHint(searchStatus, 'No matches. Try fewer words or different spelling.', 'error');
       return;
     }
     renderResults(candidates);
@@ -824,10 +933,27 @@ applyPasteBtn.addEventListener('click', () => {
   }, parsed.slug.replace(/-/g, ' '));
 });
 
+function assertOptionalHttpsUrl(value, label) {
+  if (!value) return true;
+  try {
+    const u = new URL(value);
+    if (u.protocol !== 'https:' && u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') {
+      setHint(settingsStatus, `${label} must be https:// (or localhost for dev).`, 'error');
+      return false;
+    }
+  } catch {
+    setHint(settingsStatus, `${label} doesn’t look like a valid URL.`, 'error');
+    return false;
+  }
+  return true;
+}
+
 // Settings
 const initialSettings = loadSettings();
 proxyUrlInput.value = initialSettings.proxyUrl;
 aicheKeyInput.value = initialSettings.aicheApiKey;
+catalogKeyInput.value = initialSettings.catalogApiKey;
+catalogProxyUrlInput.value = initialSettings.catalogProxyUrl;
 
 settingsToggle.addEventListener('click', () => {
   const opening = settingsToggle.getAttribute('aria-expanded') !== 'true';
@@ -838,23 +964,16 @@ settingsToggle.addEventListener('click', () => {
 saveSettingsBtn.addEventListener('click', () => {
   const proxyUrl = proxyUrlInput.value.trim();
   const aicheApiKey = aicheKeyInput.value.trim();
-  if (proxyUrl) {
-    try {
-      const u = new URL(proxyUrl);
-      if (u.protocol !== 'https:' && u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') {
-        setHint(settingsStatus, 'Proxy URL must be https:// (or localhost for dev).', 'error');
-        return;
-      }
-    } catch {
-      setHint(settingsStatus, 'That doesn’t look like a valid URL.', 'error');
-      return;
-    }
-  }
+  const catalogApiKey = catalogKeyInput.value.trim();
+  const catalogProxyUrl = catalogProxyUrlInput.value.trim();
+
+  if (!assertOptionalHttpsUrl(proxyUrl, 'Untappd proxy URL')) return;
+  if (!assertOptionalHttpsUrl(catalogProxyUrl, 'Catalog.beer proxy URL')) return;
   if (aicheApiKey && !/^sk_/i.test(aicheApiKey)) {
     setHint(settingsStatus, 'AICHE keys usually start with sk_ — double-check before saving.', 'error');
     return;
   }
-  saveSettings({ proxyUrl, aicheApiKey });
+  saveSettings({ proxyUrl, aicheApiKey, catalogApiKey, catalogProxyUrl });
   setHint(settingsStatus, 'Saved on this device only.', 'ok');
 });
 

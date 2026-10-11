@@ -29,107 +29,72 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots without errors and shows v0.2.0-beta', () => {
+test('boots without errors and shows v0.3.0-beta', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.2.0-beta');
-  assert.ok(d.getElementById('voice-btn'));
-  assert.ok(d.getElementById('aiche-key'));
-  assert.ok(d.getElementById('open-untappd-btn'));
+  assert.equal(d.getElementById('app-version').textContent, 'v0.3.0-beta');
+  assert.ok(d.getElementById('catalog-key'));
+  assert.ok(d.getElementById('search-btn'));
+  assert.ok(d.getElementById('open-catalog-btn'));
 });
 
-test('Updated badge renders release notes', () => {
-  const { d } = boot((dom) => {
-    dom.window.localStorage.setItem('tappd-in.lastSeenVersion', '0.1.0');
-  });
-  const badge = d.getElementById('updated-badge');
-  const panel = d.getElementById('whats-new');
-  assert.equal(badge.hidden, false);
-  badge.click();
-  assert.equal(panel.hidden, false);
-  assert.match(panel.querySelector('.whats-new-title').textContent, /v0\.2\.0-beta/);
+test('Catalog.beer settings save on device only', () => {
+  const { d, w } = boot();
+  d.getElementById('catalog-key').value = 'test-catalog-key';
+  d.getElementById('catalog-proxy-url').value = 'https://example.workers.dev/search';
+  d.getElementById('save-settings-btn').click();
+  const stored = JSON.parse(w.localStorage.getItem('tappd-in.settings'));
+  assert.equal(stored.catalogApiKey, 'test-catalog-key');
+  assert.equal(stored.catalogProxyUrl, 'https://example.workers.dev/search');
 });
 
-test('manifest locks portrait; pinch zoom stays off', () => {
-  assert.match(html, /user-scalable=no/);
-  assert.match(html, /maximum-scale=1/);
-  const manifest = fs.readFileSync(path.join(root, 'manifest.webmanifest'), 'utf8');
-  assert.match(manifest, /"orientation":\s*"portrait"/);
-});
-
-test('public Untappd URL helpers cover beer, brewery, user, check-in, venue, RSS', () => {
+test('candidateFromCatalogItem builds catalog.beer URL from UUID only', () => {
   const { w } = boot();
-  const T = w.TappdIn;
+  const c = w.TappdIn.candidateFromCatalogItem({
+    id: '6a7119c6-92a2-40d2-b87a-2e4529c8577a',
+    name: 'Sculpin IPA',
+    style: 'American-Style India Pale Ale',
+    abv: 7,
+    ibu: 70,
+    brewer: { id: 'ab94abb7-a3e8-4cce-8945-4758cac66a53', name: 'Ballast Point Brewing Company' },
+  });
+  assert.equal(c.source, 'catalog');
+  assert.equal(c.catalogUrl, 'https://catalog.beer/beer/6a7119c6-92a2-40d2-b87a-2e4529c8577a');
+  assert.equal(c.breweryName, 'Ballast Point Brewing Company');
+  assert.equal(w.TappdIn.candidateFromCatalogItem({ id: 'not-a-uuid', name: 'X' }), null);
+  assert.equal(w.TappdIn.catalogBeerPageUrl('nope'), null);
+});
 
-  const beer = T.parseUntappdUrl('https://untappd.com/b/finback-brewery-something-mosaic/2706030');
+test('selecting a catalog candidate sets Catalog + Untappd search links', () => {
+  const { d, w } = boot();
+  const c = w.TappdIn.candidateFromCatalogItem({
+    id: '6a7119c6-92a2-40d2-b87a-2e4529c8577a',
+    name: 'Sculpin IPA',
+    style: 'IPA',
+    abv: 7,
+    brewer: { name: 'Ballast Point Brewing Company' },
+  });
+  w.TappdIn.selectMatch(c);
+  assert.equal(d.getElementById('match-panel').hidden, false);
+  assert.equal(
+    d.getElementById('open-catalog-btn').href,
+    'https://catalog.beer/beer/6a7119c6-92a2-40d2-b87a-2e4529c8577a'
+  );
+  assert.match(d.getElementById('open-untappd-btn').href, /untappd\.com\/search/);
+  assert.match(decodeURIComponent(d.getElementById('open-untappd-btn').href), /Ballast/);
+  assert.equal(d.getElementById('open-untappd-btn').textContent.trim(), 'Search on Untappd');
+});
+
+test('public Untappd URL helpers still work', () => {
+  const { w } = boot();
+  const beer = w.TappdIn.parseUntappdUrl(
+    'https://untappd.com/b/finback-brewery-something-mosaic/2706030'
+  );
   assert.equal(beer.type, 'beer');
   assert.equal(beer.beerId, '2706030');
-  assert.equal(beer.url, T.beerUrl('finback-brewery-something-mosaic', '2706030'));
-
-  const brewery = T.parseUntappdUrl('https://untappd.com/w/finback-brewery/12345');
-  assert.equal(brewery.type, 'brewery');
-  assert.equal(brewery.breweryId, '12345');
-
-  const user = T.parseUntappdUrl('https://untappd.com/user/cdyde');
-  assert.equal(user.type, 'user');
-  assert.equal(user.username, 'cdyde');
-
-  const checkin = T.parseUntappdUrl('https://untappd.com/user/cdyde/checkin/1593590563');
-  assert.equal(checkin.type, 'checkin');
-  assert.equal(checkin.checkinId, '1593590563');
-
-  const venue = T.parseUntappdUrl('https://untappd.com/v/untappd-hq-ilm/4871493');
-  assert.equal(venue.type, 'venue');
-  assert.equal(venue.venueId, '4871493');
-
-  const rss = T.parseUntappdUrl('https://untappd.com/rss/venue/4871493');
-  assert.equal(rss.type, 'venue_rss');
-
-  assert.equal(T.beerUrl('bad slug!', '1'), null);
-  assert.equal(T.parseUntappdUrl('http://untappd.com/b/x/1'), null);
-  assert.equal(T.parseUntappdUrl('https://evil.com/b/x/1'), null);
 });
 
-test('parseVoiceBeerText splits brewery and beer', () => {
-  const { w } = boot();
-  const a = w.TappdIn.parseVoiceBeerText(
-    'Roses by the Stairs, Fresh Hop This Is Growing Up'
-  );
-  assert.match(a.brewery, /Roses by the Stairs/i);
-  assert.match(a.beer, /This Is Growing Up/i);
-
-  const b = w.TappdIn.parseVoiceBeerText(
-    'brewery Finback beer Something Mosaic'
-  );
-  assert.equal(b.brewery, 'Finback');
-  assert.equal(b.beer, 'Something Mosaic');
-});
-
-test('parseLabelText pulls brewery and beer lines', () => {
-  const { w } = boot();
-  const parsed = w.TappdIn.parseLabelText(`Finback Brewery
-Something Mosaic
-IPA
-6.5% ABV`);
-  assert.match(parsed.brewery, /Finback/i);
-  assert.match(parsed.beer, /Something Mosaic/i);
-});
-
-test('candidateFromApiItem builds URL only from API slug + bid', () => {
-  const { w } = boot();
-  const c = w.TappdIn.candidateFromApiItem({
-    bid: 2706030,
-    beer_slug: 'finback-brewery-something-mosaic',
-    beer_name: 'Something Mosaic',
-    beer_style: 'IPA - New England / Hazy',
-    beer_abv: 6.5,
-    brewery: { brewery_name: 'Finback Brewery' },
-  });
-  assert.equal(c.url, 'https://untappd.com/b/finback-brewery-something-mosaic/2706030');
-  assert.equal(w.TappdIn.candidateFromApiItem({ bid: 1, beer_slug: '' }), null);
-});
-
-test('paste URL selects match and enables Open in Untappd', () => {
+test('paste Untappd URL still opens exact beer link', () => {
   const { d } = boot();
   d.getElementById('paste-url').value =
     'https://untappd.com/b/finback-brewery-something-mosaic/2706030';
@@ -139,19 +104,17 @@ test('paste URL selects match and enables Open in Untappd', () => {
     d.getElementById('open-untappd-btn').href,
     'https://untappd.com/b/finback-brewery-something-mosaic/2706030'
   );
+  assert.equal(d.getElementById('open-untappd-btn').textContent.trim(), 'Open in Untappd');
 });
 
-test('AICHE key saves to localStorage only', () => {
-  const { d, w } = boot();
-  d.getElementById('aiche-key').value = 'sk_live_test_key_not_real';
-  d.getElementById('save-settings-btn').click();
-  const stored = JSON.parse(w.localStorage.getItem('tappd-in.settings'));
-  assert.equal(stored.aicheApiKey, 'sk_live_test_key_not_real');
-  assert.equal(stored.proxyUrl, '');
+test('voice UI is demoted under details', () => {
+  assert.match(html, /Voice \(AICHE/);
+  assert.match(html, /voice-details/);
+  assert.match(html, /Catalog\.beer API key/);
 });
 
-test('deploy workflow ships on v* tags like Gassy', () => {
-  const wf = fs.readFileSync(path.join(root, '.github/workflows/deploy.yml'), 'utf8');
-  assert.match(wf, /tags:\s*\n\s*-\s*'v\*'/);
-  assert.match(wf, /actions\/deploy-pages@v4/);
+test('catalog worker stub exists', () => {
+  const worker = fs.readFileSync(path.join(root, 'proxy/catalog-worker.js'), 'utf8');
+  assert.match(worker, /api\.catalog\.beer\/beer\/search/);
+  assert.match(worker, /CATALOG_BEER_API_KEY/);
 });

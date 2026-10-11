@@ -233,6 +233,7 @@ textarea:focus {
 
 .photo-ocr-details,
 .paste-card,
+.voice-details,
 .advanced-settings {
   color: var(--text-dim);
   font-size: 0.9rem;
@@ -240,6 +241,7 @@ textarea:focus {
 
 .photo-ocr-details > summary,
 .paste-card > summary,
+.voice-details > summary,
 .advanced-settings > summary {
   cursor: pointer;
   font-weight: 700;
@@ -250,8 +252,17 @@ textarea:focus {
 }
 
 .photo-ocr-details[open] > summary,
-.paste-card[open] > summary {
+.paste-card[open] > summary,
+.voice-details[open] > summary {
   margin-bottom: 12px;
+}
+
+.settings-panel a {
+  color: var(--accent);
+}
+
+.open-catalog {
+  margin-top: 10px;
 }
 
 .advanced-settings {

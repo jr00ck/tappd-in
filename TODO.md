@@ -1,27 +1,29 @@
 # Tappd In — feature backlog
 
-What's in the app already and what's still on the wishlist.
+## Branches
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Released / Pages baseline |
+| `feat/catalog-beer-search` | **Active MVP** — typed fields → Catalog.beer |
+| `beta/voice-aiche` | Voice / AICHE experiments (parked) |
 
 ---
 
-## In the app today
+## In the app today (`feat/catalog-beer-search`)
 
-- Mobile-first installable PWA (manifest + service worker + iOS home-screen tags)
-- **Voice-first (beta):** batch AICHE `POST /v1/transcribe` with API key in on-device Settings only
-- Public Untappd URL helpers: beer `/b/`, brewery `/w/`, user, check-in, venue `/v/`, venue RSS, search
-- Photo / OCR demoted to an optional panel (TextDetector / Tesseract) — often weak on can art
-- Editable brewery / beer fields after voice or OCR
-- Optional Untappd search proxy still supported; paste URL kept as temporary fallback
-- “Open in Untappd” uses verified HTTPS beer links only
-- Pull-down to refresh; GitHub Pages on `v*` tags; git-cliff changelog tooling
+- Typed brewery + beer → **Catalog.beer** search → pick match
+- On-device Settings for Catalog.beer API key + optional CORS proxy URL
+- `proxy/catalog-worker.js` for Cloudflare (CORS)
+- Selected beer: Catalog.beer page + **Search on Untappd** (public search handoff)
+- Public Untappd URL helpers retained for future exact deep links
+- Voice (AICHE) and photo OCR demoted to optional panels
 
 ---
 
 ## Wishlist
 
-- **Automatic beer lookup** (no paste) — Catalog.beer and/or grounded search → verified Untappd URL; evaluate Catalog.beer as primary catalog with Untappd for social handoff
-- **AICHE browser CORS verification** — confirm `Allow-Origin` for GitHub Pages; fall back to streaming WebSocket or system dictation if batch is blocked
-- **AICHE custom vocabulary workflow** — guide for top ~50 brewery/beer names (account max 50; no bulk import API)
-- **Deployed search proxy** — only if Untappd official API remains the chosen resolver
-- **Cache recent matches** — local history of beers opened from this device
-- **HEIC handling** — convert/preview iPhone HEIC picks more reliably across browsers
+- Deploy Catalog.beer Cloudflare Worker and confirm search from Pages / iOS
+- Exact Untappd `/b/…/id` deep link (API proxy or grounded search) after Catalog match
+- Resume AICHE voice once Catalog.beer path is solid
+- Cache recent matches on-device

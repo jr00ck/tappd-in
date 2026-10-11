@@ -32,7 +32,7 @@
       aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">⚙</button>
   </div>
   <div id="whats-new" class="whats-new collapsible" hidden></div>
-  <p class="tagline">Speak the can → open it in Untappd</p>
+  <p class="tagline">Type brewery + beer → find it</p>
 </header>
 
 <main>
@@ -41,29 +41,40 @@
       <h2 class="section-title">Settings</h2>
       <p class="hint">
         Keys stay <strong>only on this device</strong> (<code>localStorage</code>).
-        Nothing is committed to GitHub. Clear site data to wipe them.
+        Nothing is committed to GitHub.
       </p>
 
       <div class="field">
-        <label for="aiche-key">AICHE API key (Pro)</label>
-        <input type="password" id="aiche-key" placeholder="sk_live_…"
+        <label for="catalog-key">Catalog.beer API key</label>
+        <input type="password" id="catalog-key" placeholder="from catalog.beer/account"
           autocomplete="off" spellcheck="false">
       </div>
       <p class="hint">
-        Used for in-app voice → text via
-        <code>POST https://api.aiche.app/v1/transcribe</code> (batch).
-        Add brewery/beer names to AICHE’s account custom vocabulary (max 50)
-        for better proper-noun spelling — that dictionary applies to API calls too.
+        Free account at <a href="https://catalog.beer/signup" target="_blank" rel="noopener noreferrer">catalog.beer</a>
+        → verify email → copy key from Account. Used for beer search.
+      </p>
+
+      <div class="field">
+        <label for="catalog-proxy-url">Catalog.beer proxy URL (optional)</label>
+        <input type="url" id="catalog-proxy-url"
+          placeholder="https://your-worker.example/search"
+          autocomplete="off" spellcheck="false">
+      </div>
+      <p class="hint">
+        Browsers often can’t call <code>api.catalog.beer</code> directly (CORS).
+        Deploy <code>proxy/catalog-worker.js</code> on Cloudflare and paste that URL here.
+        If the proxy holds the key as a secret, you can leave the key field empty.
       </p>
 
       <details class="advanced-settings">
-        <summary>Advanced: Untappd search proxy</summary>
-        <p class="hint">
-          Optional. Official Untappd beer search needs a self-hosted proxy
-          (see <code>proxy/</code>). Leave blank for now — automatic lookup is still evolving.
-        </p>
+        <summary>Advanced: voice / Untappd proxy</summary>
         <div class="field">
-          <label for="proxy-url">Search proxy URL</label>
+          <label for="aiche-key">AICHE API key (Pro)</label>
+          <input type="password" id="aiche-key" placeholder="sk_live_…"
+            autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="proxy-url">Untappd search proxy URL</label>
           <input type="url" id="proxy-url" placeholder="https://your-worker.example/search"
             autocomplete="off" spellcheck="false">
         </div>
@@ -74,21 +85,9 @@
     </div>
   </section>
 
-  <section class="card voice-card">
-    <h2 class="section-title">Voice</h2>
-    <p class="hint">
-      Say the brewery and beer name (e.g. “Roses by the Stairs, Fresh Hop This Is Growing Up”).
-      Requires an AICHE Pro key in Settings.
-    </p>
-    <button type="button" id="voice-btn" class="primary-btn voice-btn" aria-pressed="false">
-      Tap to speak
-    </button>
-    <p id="voice-status" class="hint" aria-live="polite"></p>
-  </section>
-
   <section id="identify-panel" class="card">
     <h2 class="section-title">Beer details</h2>
-    <p class="hint">Correct anything before lookup. You can also type, or dictate with AICHE’s system hotkey / iOS app into these fields.</p>
+    <p class="hint">Type the brewery and beer name, then Find beer (Catalog.beer).</p>
 
     <div class="field">
       <label for="brewery-field">Brewery</label>
@@ -109,7 +108,7 @@
 
   <section id="results-panel" class="card" hidden>
     <h2 class="section-title">Matches</h2>
-    <p class="hint">Pick a result — URLs are never invented.</p>
+    <p class="hint">From Catalog.beer — pick the right beer.</p>
     <ul id="results-list" class="results"></ul>
   </section>
 
@@ -120,14 +119,29 @@
     <p class="match-url-row">
       <a id="match-url" class="match-url" href="#" target="_blank" rel="noopener noreferrer"></a>
     </p>
+    <a id="open-catalog-btn" class="secondary-outline-btn open-catalog" href="#" target="_blank" rel="noopener noreferrer">
+      Open on Catalog.beer
+    </a>
     <a id="open-untappd-btn" class="primary-btn open-untappd" href="#" target="_blank" rel="noopener noreferrer">
-      Open in Untappd
+      Search on Untappd
     </a>
     <p class="hint open-hint">
-      Uses the public HTTPS beer link. With Untappd installed (v4.1.4+), iOS/Android
-      usually hand off into the app; otherwise the website opens.
+      Untappd opens a public search for this brewery + beer (social ratings / check-in).
+      Exact Untappd beer-page deep links come later.
     </p>
   </section>
+
+  <details class="card voice-details">
+    <summary>Voice (AICHE — optional / later)</summary>
+    <p class="hint">
+      In-app mic needs AICHE Pro + may require a CORS proxy. You can also dictate with
+      AICHE’s system hotkey into the fields above.
+    </p>
+    <button type="button" id="voice-btn" class="secondary-outline-btn voice-btn" aria-pressed="false">
+      Tap to speak
+    </button>
+    <p id="voice-status" class="hint" aria-live="polite"></p>
+  </details>
 
   <details class="card photo-ocr-details">
     <summary>Photo / OCR (optional)</summary>
@@ -152,10 +166,9 @@
   </details>
 
   <details class="card paste-card">
-    <summary>Temporary: paste Untappd URL</summary>
+    <summary>Temporary: paste Untappd beer URL</summary>
     <p class="hint">
-      Fallback until automatic beer lookup lands. Only
-      <code>untappd.com/b/…/&lt;id&gt;</code> links are accepted.
+      Only <code>untappd.com/b/…/&lt;id&gt;</code> links are accepted.
     </p>
     <div class="field">
       <label for="paste-url">Untappd beer URL</label>
@@ -177,7 +190,6 @@
 
 </div>
 
-<!-- Tesseract.js kept for optional OCR path only. -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="app.js"></script>
 </body>

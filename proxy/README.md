@@ -1,19 +1,24 @@
-# Untappd search proxy
+# Proxies for Tappd In
 
-Static GitHub Pages cannot call `api.untappd.com` from the browser (no CORS), and embedding `client_secret` in a public PWA would be unsafe.
+Static GitHub Pages cannot call most beer APIs from the browser (no CORS), and secrets must not live in the public repo.
 
-`worker.js` is a small **Cloudflare Worker** that:
+| Worker | Purpose |
+|--------|---------|
+| `catalog-worker.js` | **Primary MVP** — Catalog.beer beer search |
+| `worker.js` | Untappd official API search (optional, needs Untappd app credentials) |
 
-1. Holds your Untappd app credentials as Worker secrets
-2. Forwards `GET /search?q=…` to Untappd’s official `/v4/search/beer`
-3. Returns a compact JSON list of beers (slug + bid only from the API)
+## Catalog.beer (`catalog-worker.js`)
 
-## Setup
+1. Free key: https://catalog.beer/signup → verify email → https://catalog.beer/account  
+2. Deploy `catalog-worker.js` as a Cloudflare Worker.  
+3. Either:
+   - Set secret `CATALOG_BEER_API_KEY` on the worker (shared quota for anyone using your PWA), **or**
+   - Leave secret empty and put the key in the PWA Settings (device-only); the PWA sends `Authorization` to *your* worker only.  
+4. Optional: `ALLOWED_ORIGIN=https://jr00ck.github.io`  
+5. PWA → Settings → **Catalog.beer proxy URL** = `https://<your-worker>/search`
 
-1. Apply for an Untappd API app at https://untappd.com/api (approval is not instant or guaranteed).
-2. Deploy `worker.js` as a Cloudflare Worker.
-3. Set secrets `UNTAPPD_CLIENT_ID` and `UNTAPPD_CLIENT_SECRET`.
-4. Optionally set `ALLOWED_ORIGIN` to `https://jr00ck.github.io`.
-5. In the PWA: **Settings → Search proxy URL** → `https://<your-worker>/search`
+`GET /search?q=Roses+by+the+Stairs+This+Is+Growing+Up&count=10`
 
-Without a proxy, Tappd In still works: identify the label, open Untappd’s public search, paste the canonical beer URL. The app **never invents** `/b/…/id` links.
+## Untappd (`worker.js`)
+
+See comments in `worker.js`. Requires Untappd API app approval — not needed for the Catalog.beer MVP.
