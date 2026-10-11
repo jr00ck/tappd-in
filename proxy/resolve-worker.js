@@ -140,8 +140,9 @@ function untappdSearchWebUrl(brewery, beer) {
  * @returns {Promise<Array<{ title: string, url: string, snippet?: string }>>}
  */
 async function searchUntappdPages(apiKey, brewery, beer) {
-  // Bias toward beer pages; domain filter still restricts to untappd.com
-  const query = `${brewery} ${beer} site:untappd.com/b`.trim();
+  // Path allowlist: beer pages only (not /user/.../checkin/...).
+  // Quote the beer name so "Something Mosaic" isn't treated as stopwords.
+  const query = `"${beer}" ${brewery} untappd`.trim();
   const res = await fetch(PERPLEXITY_SEARCH, {
     method: 'POST',
     headers: {
@@ -151,9 +152,9 @@ async function searchUntappdPages(apiKey, brewery, beer) {
     },
     body: JSON.stringify({
       query,
-      search_type: 'fast',
-      max_results: 5,
-      search_domain_filter: ['untappd.com'],
+      search_type: 'web',
+      max_results: 8,
+      search_domain_filter: ['untappd.com/b'],
     }),
   });
   if (!res.ok) {
@@ -196,7 +197,23 @@ function buildResolveResponse(brewery, beer, pages) {
     }
   }
 
-  const scored = [...byUrl.values()].sort((a, b) => b.score - a.score);
+  const brewTokens = [...tokenSet(brewery)];
+  const beerTokens = [...tokenSet(beer)];
+  let scored = [...byUrl.values()].filter((c) => {
+    const slug = slugToWords(c.slug);
+    // Must look like the typed brewery (slug usually starts with brewery words).
+    if (brewTokens.length && !brewTokens.some((t) => slug.includes(t))) return false;
+    return true;
+  });
+  // Require beer-name tokens in the slug. Empty > wrong beer (UI has Search on Untappd).
+  if (beerTokens.length) {
+    scored = scored.filter((c) => {
+      const slug = slugToWords(c.slug);
+      const hits = beerTokens.filter((t) => slug.includes(t)).length;
+      return hits >= 1 && hits / beerTokens.length >= 0.5;
+    });
+  }
+  scored.sort((a, b) => b.score - a.score);
   const best = scored[0] || null;
   const second = scored[1];
   const confident = !!(
