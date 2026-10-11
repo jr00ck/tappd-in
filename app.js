@@ -6,18 +6,18 @@ const CACHE_KEY = 'tappd-in.resolveCache';
 const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 
-const APP_VERSION = '0.4.0-beta';
+const APP_VERSION = '0.4.1-beta';
 const RELEASE_NOTES = [
+  'Resolver hit-rate: multi-query Perplexity + stricter scoring / URL normalize',
   'Untappd URL resolver via Perplexity Search (Catalog.beer path parked)',
   'Quick multi-beer entry per brewery with local cache + session persistence',
-  'Manual Fix link + candidate pick when search is not confident',
 ];
 
 const DEFAULT_RESOLVE_URL =
   'https://tappd-in-catalog.rerun-cost-xbox.workers.dev/resolve';
 
-const BEER_PATH_RE = /^\/b\/([a-z0-9-]+)\/(\d+)\/?$/i;
-const BEER_URL_RE = /^https:\/\/(?:www\.)?untappd\.com\/b\/([a-z0-9-]+)\/(\d+)\/?(?:[?#].*)?$/i;
+const BEER_PATH_RE = /^\/b\/([a-z0-9-]+)\/(\d+)(?:\/|$)/i;
+const BEER_URL_RE = /^https:\/\/(?:www\.)?untappd\.com\/b\/([a-z0-9-]+)\/(\d+)(?:\/[^?#]*)?(?:[?#].*)?$/i;
 
 // --- Pure helpers ---
 
@@ -57,6 +57,9 @@ function parseUntappdBeerUrl(input) {
   if (url.protocol !== 'https:') return null;
   const host = url.hostname.replace(/^www\./i, '').toLowerCase();
   if (host !== 'untappd.com') return null;
+  if (/^\/user\//i.test(url.pathname) || /^\/v\//i.test(url.pathname) || /^\/w\//i.test(url.pathname)) {
+    return null;
+  }
   const m = BEER_PATH_RE.exec(url.pathname) || BEER_URL_RE.exec(url.href);
   if (!m) return null;
   const slug = (m[1] || '').toLowerCase();

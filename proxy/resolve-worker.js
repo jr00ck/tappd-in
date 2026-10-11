@@ -2,6 +2,7 @@
  * Cloudflare Worker — Untappd URL resolver for Tappd In (Perplexity Search).
  *
  * GET /resolve?brewery=Finback&beer=Something+Mosaic
+ * GET /resolve?...&debug=1  → include considered URLs + scores
  *
  * Secrets: PERPLEXITY_API_KEY
  * Soft limit: SEARCH_LIMITER (30/min/IP)
@@ -10,8 +11,13 @@
  *   npx wrangler@latest secret put PERPLEXITY_API_KEY
  */
 
+import {
+  buildQueryVariants,
+  buildResolveResponse,
+  flattenProviderResults,
+} from './resolve-core.js';
+
 const PERPLEXITY_SEARCH = 'https://api.perplexity.ai/search';
-const BEER_PATH_RE = /^\/b\/([a-z0-9-]+)\/(\d+)\/?$/i;
 
 function corsHeaders(origin, allowedOrigin) {
   const defaults = [
@@ -50,99 +56,11 @@ function clientKey(request) {
     || 'unknown';
 }
 
-function stripDiacritics(s) {
-  return String(s || '').normalize('NFD').replace(/\p{M}/gu, '');
-}
-
-/** Normalize for fuzzy match / cache keys. */
-function normalizeMatchText(s) {
-  let t = stripDiacritics(s).toLowerCase();
-  t = t.replace(/&/g, ' and ');
-  t = t.replace(/\b(the|brewing|brewery|brew|co|company|llc|inc)\b/g, ' ');
-  t = t.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return t;
-}
-
-function tokenSet(s) {
-  return new Set(normalizeMatchText(s).split(' ').filter((w) => w.length > 1));
-}
-
-function parseUntappdBeerUrl(input) {
-  const raw = String(input || '').trim();
-  if (!raw) return null;
-  let url;
-  try {
-    url = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-  const host = url.hostname.replace(/^www\./i, '').toLowerCase();
-  if (host !== 'untappd.com') return null;
-  const m = BEER_PATH_RE.exec(url.pathname);
-  if (!m) return null;
-  return {
-    slug: m[1].toLowerCase(),
-    id: m[2],
-    url: `https://untappd.com/b/${m[1].toLowerCase()}/${m[2]}`,
-  };
-}
-
-/** Pull /b/slug/id links out of titles/snippets when the result URL itself isn't a beer page. */
-function extractBeerUrlsFromText(...parts) {
-  const text = parts.filter(Boolean).join(' ');
-  const found = [];
-  const re = /https?:\/\/(?:www\.)?untappd\.com\/b\/[a-z0-9-]+\/\d+/gi;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const parsed = parseUntappdBeerUrl(m[0]);
-    if (parsed) found.push(parsed);
-  }
-  return found;
-}
-
-function slugToWords(slug) {
-  return normalizeMatchText(String(slug || '').replace(/-/g, ' '));
-}
-
-/** 0–1-ish score: query tokens vs slug (+ title bonus). */
-function scoreCandidate(brewery, beer, parsed, title) {
-  const query = normalizeMatchText(`${brewery} ${beer}`);
-  const qTokens = [...tokenSet(query)];
-  if (!qTokens.length) return 0;
-  const slugWords = slugToWords(parsed.slug);
-  const titleWords = normalizeMatchText(title || '');
-  const hay = `${slugWords} ${titleWords}`;
-  let hit = 0;
-  for (const t of qTokens) {
-    if (hay.split(' ').some((w) => w === t || w.startsWith(t) || t.startsWith(w))) hit += 1;
-  }
-  let score = hit / qTokens.length;
-  if (slugWords.includes(normalizeMatchText(beer)) || normalizeMatchText(beer).includes(slugWords)) {
-    score += 0.15;
-  }
-  if (slugWords.includes(normalizeMatchText(brewery).split(' ')[0] || '')) {
-    score += 0.1;
-  }
-  return Math.min(score, 1.25);
-}
-
-function untappdSearchWebUrl(brewery, beer) {
-  const q = [brewery, beer].map((s) => String(s || '').trim()).filter(Boolean).join(' ');
-  const url = new URL('https://untappd.com/search');
-  url.searchParams.set('q', q);
-  url.searchParams.set('type', 'beer');
-  return url.href;
-}
-
 /**
- * Provider adapter — swap this if Search API changes or we switch vendors.
- * @returns {Promise<Array<{ title: string, url: string, snippet?: string }>>}
+ * Provider adapter — one HTTP request to Perplexity Search.
+ * Multi-query array is billed as one Search request (rate-limit counts each query).
  */
-async function searchUntappdPages(apiKey, brewery, beer) {
-  // Path allowlist: beer pages only (not /user/.../checkin/...).
-  // Quote the beer name so "Something Mosaic" isn't treated as stopwords.
-  const query = `"${beer}" ${brewery} untappd`.trim();
+async function perplexitySearch(apiKey, { queries, searchType, maxResults }) {
   const res = await fetch(PERPLEXITY_SEARCH, {
     method: 'POST',
     headers: {
@@ -151,9 +69,9 @@ async function searchUntappdPages(apiKey, brewery, beer) {
       Accept: 'application/json',
     },
     body: JSON.stringify({
-      query,
-      search_type: 'web',
-      max_results: 8,
+      query: queries.length === 1 ? queries[0] : queries,
+      search_type: searchType,
+      max_results: maxResults,
       search_domain_filter: ['untappd.com/b'],
     }),
   });
@@ -165,75 +83,55 @@ async function searchUntappdPages(apiKey, brewery, beer) {
     throw err;
   }
   const payload = await res.json();
-  const results = Array.isArray(payload.results) ? payload.results : [];
-  return results.map((r) => ({
+  const flat = flattenProviderResults(payload);
+  return flat.map((r) => ({
     title: String(r.title || ''),
     url: String(r.url || ''),
     snippet: String(r.snippet || ''),
   }));
 }
 
-function buildResolveResponse(brewery, beer, pages) {
-  const byUrl = new Map();
-  const consider = (parsed, title) => {
-    if (!parsed) return;
-    const score = scoreCandidate(brewery, beer, parsed, title);
-    const prev = byUrl.get(parsed.url);
-    if (!prev || score > prev.score) {
-      byUrl.set(parsed.url, {
-        url: parsed.url,
-        id: parsed.id,
-        slug: parsed.slug,
-        title: title || parsed.slug,
-        score: Math.round(score * 1000) / 1000,
-      });
-    }
-  };
+async function resolveWithPasses(apiKey, brewery, beer, debug) {
+  const queries = buildQueryVariants(brewery, beer);
+  let providerCalls = 0;
+  let pass = 'fast_multi';
 
-  for (const page of pages) {
-    consider(parseUntappdBeerUrl(page.url), page.title);
-    for (const parsed of extractBeerUrlsFromText(page.title, page.snippet, page.url)) {
-      consider(parsed, page.title);
-    }
-  }
-
-  const brewTokens = [...tokenSet(brewery)];
-  const beerTokens = [...tokenSet(beer)];
-  let scored = [...byUrl.values()].filter((c) => {
-    const slug = slugToWords(c.slug);
-    // Must look like the typed brewery (slug usually starts with brewery words).
-    if (brewTokens.length && !brewTokens.some((t) => slug.includes(t))) return false;
-    return true;
+  // Pass 1: multi-query, search_type fast (cheaper / lower latency).
+  // max_results is a TOTAL budget split across queries — use API max (20).
+  providerCalls += 1;
+  let pages = await perplexitySearch(apiKey, {
+    queries,
+    searchType: 'fast',
+    maxResults: 20,
   });
-  // Require beer-name tokens in the slug. Empty > wrong beer (UI has Search on Untappd).
-  if (beerTokens.length) {
-    scored = scored.filter((c) => {
-      const slug = slugToWords(c.slug);
-      const hits = beerTokens.filter((t) => slug.includes(t)).length;
-      return hits >= 1 && hits / beerTokens.length >= 0.5;
+  let body = buildResolveResponse(brewery, beer, pages, {
+    pass,
+    providerCalls,
+    queries,
+    debug,
+  });
+
+  // Pass 2: only if needed — multi-query with search_type web; merge with pass 1
+  if (!body.confident) {
+    pass = 'web_multi';
+    providerCalls += 1;
+    const more = await perplexitySearch(apiKey, {
+      queries,
+      searchType: 'web',
+      maxResults: 20,
+    });
+    pages = [...pages, ...more];
+    body = buildResolveResponse(brewery, beer, pages, {
+      pass,
+      providerCalls,
+      queries,
+      debug,
     });
   }
-  scored.sort((a, b) => b.score - a.score);
-  const best = scored[0] || null;
-  const second = scored[1];
-  const confident = !!(
-    best
-    && best.score >= 0.72
-    && (!second || best.score - second.score >= 0.08 || best.score >= 0.9)
-  );
-  return {
-    best,
-    candidates: scored.slice(0, 5),
-    confident,
-    untappdSearchUrl: untappdSearchWebUrl(brewery, beer),
-    query: { brewery, beer },
-    // Diagnostic only — helps tune when candidates stay empty
-    meta: {
-      providerResults: pages.length,
-      beerUrlsFound: scored.length,
-      sampleProviderUrls: pages.slice(0, 5).map((p) => p.url),
-    },
-  };
+
+  body.pass = pass;
+  body.providerCalls = providerCalls;
+  return body;
 }
 
 export default {
@@ -254,12 +152,13 @@ export default {
     if (url.pathname !== '/' && !url.pathname.endsWith('/resolve')) {
       return json({
         error: 'Not found',
-        hint: 'GET /resolve?brewery=…&beer=…',
+        hint: 'GET /resolve?brewery=…&beer=…[&debug=1]',
       }, 404, headers);
     }
 
     const brewery = (url.searchParams.get('brewery') || '').trim();
     const beer = (url.searchParams.get('beer') || '').trim();
+    const debug = url.searchParams.get('debug') === '1';
     if (!brewery || !beer) {
       return json({ error: 'Missing brewery or beer' }, 400, headers);
     }
@@ -280,8 +179,7 @@ export default {
     }
 
     try {
-      const pages = await searchUntappdPages(apiKey, brewery, beer);
-      const body = buildResolveResponse(brewery, beer, pages);
+      const body = await resolveWithPasses(apiKey, brewery, beer, debug);
       return json(body, 200, headers);
     } catch (err) {
       return json({

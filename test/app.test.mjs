@@ -28,10 +28,10 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.4.0-beta with quick-entry UI', () => {
+test('boots as v0.4.1-beta with quick-entry UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.4.0-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.4.1-beta');
   assert.ok(d.getElementById('brewery-field'));
   assert.ok(d.getElementById('beer-field'));
   assert.ok(d.getElementById('new-brewer-btn'));
@@ -119,9 +119,11 @@ test('manual cache override wins over prior search entry', () => {
 
 test('resolve worker file is Perplexity-based', () => {
   const worker = fs.readFileSync(path.join(root, 'proxy/resolve-worker.js'), 'utf8');
+  const core = fs.readFileSync(path.join(root, 'proxy/resolve-core.js'), 'utf8');
   assert.match(worker, /api\.perplexity\.ai\/search/);
-  assert.match(worker, /search_type:\s*'fast'/);
+  assert.match(worker, /searchType:\s*'fast'/);
   assert.match(worker, /PERPLEXITY_API_KEY/);
   assert.match(worker, /\/resolve/);
+  assert.match(core, /buildQueryVariants/);
   assert.doesNotMatch(worker, /catalog\.beer/);
 });
