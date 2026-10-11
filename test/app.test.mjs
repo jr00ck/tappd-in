@@ -29,10 +29,10 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots without errors and shows v0.3.0-beta', () => {
+test('boots without errors and shows v0.3.1-beta', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.3.0-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.3.1-beta');
   assert.ok(d.getElementById('catalog-key'));
   assert.ok(d.getElementById('search-btn'));
   assert.ok(d.getElementById('open-catalog-btn'));

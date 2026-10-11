@@ -148,6 +148,11 @@ main {
   gap: 14px;
 }
 
+/* Keep the primary form visible even if later CSS fails to apply. */
+#identify-panel {
+  display: block;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--card-border);

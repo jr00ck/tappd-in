@@ -4,11 +4,11 @@ const SETTINGS_KEY = 'tappd-in.settings';
 const LAST_SEEN_KEY = 'tappd-in.lastSeenVersion';
 const AICHE_TRANSCRIBE_URL = 'https://api.aiche.app/v1/transcribe';
 
-const APP_VERSION = '0.3.0-beta';
+const APP_VERSION = '0.3.1-beta';
 const RELEASE_NOTES = [
+  'Fix Safari Dock PWA hard-refresh blank/Summarize first paint (service worker)',
   'Catalog.beer search from typed brewery + beer (primary MVP path)',
   'Optional Cloudflare proxy for Catalog.beer CORS; Untappd search handoff',
-  'Voice / OCR kept as optional panels',
 ];
 
 const CATALOG_API_SEARCH = 'https://api.catalog.beer/beer/search';
