@@ -12,6 +12,9 @@ const RELEASE_NOTES = [
 ];
 
 const CATALOG_API_SEARCH = 'https://api.catalog.beer/beer/search';
+/** Built-in CORS proxy (GitHub Pages cannot call Catalog.beer directly). Override in Advanced. */
+const DEFAULT_CATALOG_PROXY_URL =
+  'https://tappd-in-catalog.rerun-cost-xbox.workers.dev/search';
 
 // --- Public Untappd URL shapes (https only; never invent IDs/slugs) ---
 
@@ -221,6 +224,48 @@ function buildSearchQuery(brewery, beer) {
   return [brewery, beer].map((s) => String(s || '').trim()).filter(Boolean).join(' ').trim();
 }
 
+function normalizeMatchName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/** Client-side re-rank so brewery + beer fields beat loose Catalog.beer relevance. */
+function rankCatalogCandidate(candidate, brewery, beer) {
+  const brewQ = normalizeMatchName(brewery);
+  const beerQ = normalizeMatchName(beer);
+  const brewC = normalizeMatchName(candidate.breweryName);
+  const beerC = normalizeMatchName(candidate.beerName);
+  let score = 0;
+  if (brewQ && brewC) {
+    if (brewC === brewQ) score += 6;
+    else if (brewC.includes(brewQ) || brewQ.includes(brewC)) score += 4;
+    else {
+      const tokens = brewQ.split(/\s+/).filter((t) => t.length > 1);
+      const hits = tokens.filter((t) => brewC.includes(t)).length;
+      score += tokens.length ? (hits / tokens.length) * 3 : 0;
+    }
+  }
+  if (beerQ && beerC) {
+    if (beerC === beerQ) score += 6;
+    else if (beerC.includes(beerQ) || beerQ.includes(beerC)) score += 4;
+    else {
+      const tokens = beerQ.split(/\s+/).filter((t) => t.length > 1);
+      const hits = tokens.filter((t) => beerC.includes(t)).length;
+      score += tokens.length ? (hits / tokens.length) * 3 : 0;
+    }
+  }
+  return score;
+}
+
+function sortCatalogCandidates(candidates, brewery, beer) {
+  return [...candidates].sort(
+    (a, b) => rankCatalogCandidate(b, brewery, beer) - rankCatalogCandidate(a, brewery, beer)
+  );
+}
+
 function candidateFromApiItem(item) {
   if (!item || item.bid == null) return null;
   const bid = String(item.bid);
@@ -414,6 +459,8 @@ window.TappdIn = {
   catalogBeerPageUrl,
   candidateFromApiItem,
   candidateFromCatalogItem,
+  rankCatalogCandidate,
+  sortCatalogCandidates,
   normalizeWhitespace,
   escapeHtml,
   transcribeWithAiche,
@@ -814,16 +861,21 @@ function renderResults(candidates) {
   }
 }
 
-async function searchCatalogBeer(query, settings) {
+async function searchCatalogBeer({ brewery, beer, query }, settings) {
   const count = 10;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
+  const timer = setTimeout(() => ctrl.abort(), 20000);
   let res;
 
+  const proxyBase = settings.catalogProxyUrl || DEFAULT_CATALOG_PROXY_URL;
+
   try {
-    if (settings.catalogProxyUrl) {
-      const endpoint = new URL(settings.catalogProxyUrl);
-      endpoint.searchParams.set('q', query);
+    if (proxyBase) {
+      const endpoint = new URL(proxyBase);
+      if (brewery) endpoint.searchParams.set('brewery', brewery);
+      if (beer) endpoint.searchParams.set('beer', beer);
+      // Legacy combined q — used when proxy is old or only one field is filled.
+      if (query) endpoint.searchParams.set('q', query);
       endpoint.searchParams.set('count', String(count));
       const headers = { Accept: 'application/json' };
       if (settings.catalogApiKey) {
@@ -831,8 +883,9 @@ async function searchCatalogBeer(query, settings) {
       }
       res = await fetch(endpoint.href, { method: 'GET', headers, signal: ctrl.signal });
     } else if (settings.catalogApiKey) {
+      // Direct Catalog.beer call — usually fails in browsers (no CORS).
       const endpoint = new URL(CATALOG_API_SEARCH);
-      endpoint.searchParams.set('q', query);
+      endpoint.searchParams.set('q', query || beer || brewery);
       endpoint.searchParams.set('count', String(count));
       res = await fetch(endpoint.href, {
         method: 'GET',
@@ -843,16 +896,13 @@ async function searchCatalogBeer(query, settings) {
         signal: ctrl.signal,
       });
     } else {
-      throw new Error(
-        'Add a Catalog.beer API key in Settings (and a proxy URL if the browser blocks CORS).'
-      );
+      throw new Error('Catalog.beer proxy URL is not configured.');
     }
   } catch (err) {
-    if (err && err.message && err.message.startsWith('Add a Catalog')) throw err;
+    if (err && err.message && err.message.startsWith('Catalog.beer proxy')) throw err;
     if (err && err.name === 'AbortError') throw err;
     throw new Error(
-      'Could not reach Catalog.beer (network or CORS). '
-      + 'Deploy proxy/catalog-worker.js and set Catalog.beer proxy URL in Settings.'
+      'Could not reach Catalog.beer (network or proxy). Check connectivity and Advanced proxy URL.'
     );
   } finally {
     clearTimeout(timer);
@@ -860,8 +910,13 @@ async function searchCatalogBeer(query, settings) {
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
+    if (res.status === 429) {
+      throw new Error('Search rate limit hit — wait a minute and try again.');
+    }
     if (res.status === 401 || res.status === 403) {
-      throw new Error('Catalog.beer rejected the API key. Check Settings.');
+      throw new Error(
+        'Catalog.beer auth failed. Set CATALOG_BEER_API_KEY on the worker, or add a key under Advanced Settings.'
+      );
     }
     throw new Error(`Catalog.beer error ${res.status}${body ? `: ${body.slice(0, 120)}` : ''}`);
   }
@@ -874,7 +929,8 @@ async function searchCatalogBeer(query, settings) {
     items = data.data;
   }
 
-  return items.map(candidateFromCatalogItem).filter(Boolean);
+  const candidates = items.map(candidateFromCatalogItem).filter(Boolean);
+  return sortCatalogCandidates(candidates, brewery, beer);
 }
 
 searchBtn.addEventListener('click', async () => {
@@ -892,10 +948,15 @@ searchBtn.addEventListener('click', async () => {
   searchBtn.disabled = true;
   setHint(searchStatus, 'Searching Catalog.beer…');
   try {
-    const candidates = await searchCatalogBeer(query, settings);
+    const candidates = await searchCatalogBeer({ brewery, beer, query }, settings);
     if (!candidates.length) {
       renderResults([]);
-      setHint(searchStatus, 'No matches. Try fewer words or different spelling.', 'error');
+      setHint(
+        searchStatus,
+        'No Catalog.beer matches for that brewery/beer. '
+        + 'It may be missing from Catalog — use Search on Untappd below, or try different spelling.',
+        'error'
+      );
       return;
     }
     renderResults(candidates);

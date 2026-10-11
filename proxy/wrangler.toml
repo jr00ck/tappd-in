@@ -1,0 +1,23 @@
+name = "tappd-in-catalog"
+main = "catalog-worker.js"
+compatibility_date = "2024-11-01"
+workers_dev = true
+
+# Deploy with a current CLI so [[ratelimits]] is applied:
+#   npx wrangler@latest deploy
+# (Wrangler 4.19.x warns "Unexpected fields: ratelimits" and skips this binding.)
+
+[vars]
+ALLOWED_ORIGIN = "https://jr00ck.github.io"
+
+# Soft abuse brake: 30 searches / minute / client IP (per Cloudflare location).
+[[ratelimits]]
+name = "SEARCH_LIMITER"
+namespace_id = "7101"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+# Once (survives redeploys) — do not commit the value:
+#   npx wrangler@latest secret put CATALOG_BEER_API_KEY

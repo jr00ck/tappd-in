@@ -47,30 +47,29 @@
         Nothing is committed to GitHub.
       </p>
 
-      <div class="field">
-        <label for="catalog-key">Catalog.beer API key</label>
-        <input type="password" id="catalog-key" placeholder="from catalog.beer/account"
-          autocomplete="off" spellcheck="false">
-      </div>
       <p class="hint">
-        Free account at <a href="https://catalog.beer/signup" target="_blank" rel="noopener noreferrer">catalog.beer</a>
-        → verify email → copy key from Account. Used for beer search.
-      </p>
-
-      <div class="field">
-        <label for="catalog-proxy-url">Catalog.beer proxy URL (optional)</label>
-        <input type="url" id="catalog-proxy-url"
-          placeholder="https://your-worker.example/search"
-          autocomplete="off" spellcheck="false">
-      </div>
-      <p class="hint">
-        Browsers often can’t call <code>api.catalog.beer</code> directly (CORS).
-        Deploy <code>proxy/catalog-worker.js</code> on Cloudflare and paste that URL here.
-        If the proxy holds the key as a secret, you can leave the key field empty.
+        Beer search uses the built-in Cloudflare proxy. The Catalog.beer API key lives on the
+        worker (secret), so friends normally need no Settings for search.
       </p>
 
       <details class="advanced-settings">
-        <summary>Advanced: voice / Untappd proxy</summary>
+        <summary>Advanced: keys / proxies / voice</summary>
+        <div class="field">
+          <label for="catalog-key">Catalog.beer API key (optional override)</label>
+          <input type="password" id="catalog-key" placeholder="only if worker has no secret"
+            autocomplete="off" spellcheck="false">
+        </div>
+        <p class="hint">
+          Prefer the worker secret. Personal key here is only needed if you run a proxy
+          without <code>CATALOG_BEER_API_KEY</code>.
+          Free key: <a href="https://catalog.beer/signup" target="_blank" rel="noopener noreferrer">catalog.beer</a>.
+        </p>
+        <div class="field">
+          <label for="catalog-proxy-url">Catalog.beer proxy URL override</label>
+          <input type="url" id="catalog-proxy-url"
+            placeholder="https://tappd-in-catalog.rerun-cost-xbox.workers.dev/search"
+            autocomplete="off" spellcheck="false">
+        </div>
         <div class="field">
           <label for="aiche-key">AICHE API key (Pro)</label>
           <input type="password" id="aiche-key" placeholder="sk_live_…"

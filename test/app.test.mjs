@@ -48,6 +48,26 @@ test('Catalog.beer settings save on device only', () => {
   assert.equal(stored.catalogProxyUrl, 'https://example.workers.dev/search');
 });
 
+test('sortCatalogCandidates prefers matching brewery + beer', () => {
+  const { w } = boot();
+  const ranked = w.TappdIn.sortCatalogCandidates([
+    {
+      beerName: 'Duality // Mortalis',
+      breweryName: 'Woven Water Brewing',
+    },
+    {
+      beerName: 'Strange Philosophies',
+      breweryName: 'Mortalis Brewing Company',
+    },
+    {
+      beerName: 'A Long Strange Ride',
+      breweryName: 'Joyride Brewing Company',
+    },
+  ], 'Mortalis', 'Strange Philosophies');
+  assert.equal(ranked[0].beerName, 'Strange Philosophies');
+  assert.equal(ranked[0].breweryName, 'Mortalis Brewing Company');
+});
+
 test('candidateFromCatalogItem builds catalog.beer URL from UUID only', () => {
   const { w } = boot();
   const c = w.TappdIn.candidateFromCatalogItem({
@@ -116,5 +136,7 @@ test('voice UI is demoted under details', () => {
 test('catalog worker stub exists', () => {
   const worker = fs.readFileSync(path.join(root, 'proxy/catalog-worker.js'), 'utf8');
   assert.match(worker, /api\.catalog\.beer\/beer\/search/);
+  assert.match(worker, /api\.catalog\.beer\/brewer\/search/);
   assert.match(worker, /CATALOG_BEER_API_KEY/);
+  assert.match(worker, /smartSearch|brewer_beers|brewery-first/i);
 });
