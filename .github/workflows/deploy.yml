@@ -23,9 +23,20 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      # Publish only the PWA shell — not tests, Worker source, or local tooling.
+      - name: Stage Pages artifact
+        run: |
+          mkdir -p _site
+          cp index.html style.css app.js sw.js manifest.webmanifest package.json _site/
+          cp -R icons _site/icons
+          # Optional docs at site root (harmless if missing)
+          [ -f README.md ] && cp README.md _site/ || true
+          [ -f CHANGELOG.md ] && cp CHANGELOG.md _site/ || true
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

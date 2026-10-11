@@ -412,7 +412,7 @@ textarea:focus {
   font-size: 0.78rem;
 }
 
-/* Pull-to-refresh */
+/* Pull-to-refresh (Gassy-style) */
 .ptr-indicator {
   position: fixed;
   top: calc(env(safe-area-inset-top) + 8px);
@@ -421,9 +421,13 @@ textarea:focus {
   height: 28px;
   margin-left: -14px;
   opacity: 0;
-  z-index: 20;
+  z-index: 50;
   pointer-events: none;
-  transition: opacity 0.15s ease;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.ptr-indicator.ptr-dragging {
+  transition: none;
 }
 
 .ptr-spinner {
@@ -443,7 +447,11 @@ textarea:focus {
 }
 
 #app-content {
-  transition: transform 0.2s ease;
+  transition: transform 0.25s ease;
+}
+
+#app-content.ptr-dragging {
+  transition: none;
 }
 
 /* Quick-entry session */

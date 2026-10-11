@@ -61,21 +61,37 @@ npm test
 
 Service workers need HTTPS or `localhost`. Camera capture needs a secure context as well.
 
+## Local development (Cursor browser)
+
+```
+npm run serve
+# open http://127.0.0.1:8099 in the Cursor Simple Browser
+```
+
+Service workers need HTTPS or `localhost` / `127.0.0.1`. On desktop, reload the tab after a code change (network-first SW). On phone, **pull down to refresh** to fetch + activate a new build (same as Gassy).
+
+While iterating before a tag, set `PREVIEW_BUILD` in `app.js` (e.g. `'a3'`) so the footer shows `v0.4.2-beta · a3` on non-Pages hosts. Clear it before tagging.
+
 ## Releasing
 
 GitHub Pages deploys on a pushed version tag (`v*`), not on every `main` push — see `.github/workflows/deploy.yml`.
+
+The `github-pages` environment must allow **tag** deployments matching `v*` (Settings → Environments → github-pages → Deployment branches/tags). Without that, tag pushes fail with “not allowed to deploy”.
 
 Prefer [Conventional Commits](https://www.conventionalcommits.org) so [git-cliff](https://git-cliff.org) can group the changelog (`cliff.toml`).
 
 ```
 # 1. Bump APP_VERSION + RELEASE_NOTES in app.js, package.json version, and CACHE in sw.js
+#    Clear PREVIEW_BUILD to ''
 # 2. Refresh CHANGELOG.md
 npm run changelog
 
 # 3. Tag + publish (Pages deploys from the tag)
 git tag -a vX.Y.Z -m "vX.Y.Z - short description"
-git push origin vX.Y.Z
+git push origin main vX.Y.Z
 gh release create vX.Y.Z --title "vX.Y.Z" --notes-file - <<'EOF'
 - bullet from RELEASE_NOTES
 EOF
 ```
+
+`APP_VERSION` drives the footer and the "✓ Updated" badge after pull-to-refresh. `RELEASE_NOTES` is the short list shown when that badge is tapped.

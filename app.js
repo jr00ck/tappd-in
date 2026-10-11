@@ -6,12 +6,26 @@ const CACHE_KEY = 'tappd-in.resolveCache';
 const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 
-const APP_VERSION = '0.4.1-beta';
+const APP_VERSION = '0.4.2-beta';
+// Short build id while iterating — set e.g. 'a1', clear before tagging a release.
+// Never shown on the live Pages host even if forgotten.
+const PREVIEW_BUILD = '';
+const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
-  'Resolver hit-rate: multi-query Perplexity + stricter scoring / URL normalize',
+  'Pull-to-refresh installs updates (same flow as Gassy); network-first service worker',
+  'Resolver hit-rate: multi-query Perplexity + exact beer scoring / URL normalize',
   'Untappd URL resolver via Perplexity Search (Catalog.beer path parked)',
-  'Quick multi-beer entry per brewery with local cache + session persistence',
 ];
+
+function prefersReducedMotion() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function versionLabel() {
+  const onProd = location.hostname === PRODUCTION_HOST;
+  if (!onProd && PREVIEW_BUILD) return `v${APP_VERSION} · ${PREVIEW_BUILD}`;
+  return `v${APP_VERSION}`;
+}
 
 const DEFAULT_RESOLVE_URL =
   'https://tappd-in-catalog.rerun-cost-xbox.workers.dev/resolve';
@@ -614,40 +628,134 @@ sessionGroups.addEventListener('toggle', (e) => {
   }
 }, true);
 
-// Version badge
-appVersionEl.textContent = `v${APP_VERSION}`;
-const seen = localStorage.getItem(LAST_SEEN_KEY);
-if (seen !== APP_VERSION) {
+// Version badge + what's new (same pattern as Gassy)
+appVersionEl.textContent = versionLabel();
+const lastSeenVersion = localStorage.getItem(LAST_SEEN_KEY);
+if (lastSeenVersion && lastSeenVersion !== APP_VERSION) {
   updatedBadge.hidden = false;
-  whatsNew.innerHTML = `<ul>${RELEASE_NOTES.map((n) => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`;
-  updatedBadge.addEventListener('click', () => {
-    const show = whatsNew.hidden;
-    whatsNew.hidden = !show;
-    if (!show) localStorage.setItem(LAST_SEEN_KEY, APP_VERSION);
-  });
 }
+localStorage.setItem(LAST_SEEN_KEY, APP_VERSION);
+
+function renderWhatsNew() {
+  const items = RELEASE_NOTES.map((note) => `<li>${escapeHtml(note)}</li>`).join('');
+  whatsNew.innerHTML = `
+    <div class="collapse-inner">
+      <p class="whats-new-title">What's new in v${escapeHtml(APP_VERSION)}</p>
+      <ul class="whats-new-list">${items}</ul>
+    </div>
+  `;
+}
+
+updatedBadge.addEventListener('click', () => {
+  const opening = updatedBadge.getAttribute('aria-expanded') !== 'true';
+  if (opening) renderWhatsNew();
+  whatsNew.hidden = !opening;
+  updatedBadge.setAttribute('aria-expanded', opening ? 'true' : 'false');
+});
 
 resolveUrlInput.value = loadSettings().resolveUrl;
 refreshBrewerySuggestions();
 renderSession();
 breweryField.focus();
 
-// Pull-to-refresh lite (keep from prior UX if present)
-const ptr = document.getElementById('ptr-indicator');
+// --- Service worker: offline caching only. Updates apply via pull-to-refresh. ---
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+
+// --- Pull-to-refresh: check for + apply an update (Gassy-style) ---
+const ptrIndicator = document.getElementById('ptr-indicator');
 const appContent = document.getElementById('app-content');
-if (ptr && appContent && 'ontouchstart' in window) {
-  let startY = 0;
-  let pulling = false;
-  appContent.addEventListener('touchstart', (e) => {
-    if (window.scrollY <= 0) {
-      startY = e.touches[0].clientY;
-      pulling = true;
+const PTR_THRESHOLD = 70;
+const PTR_MAX = 110;
+let ptrStartY = null;
+let ptrPulling = false;
+let ptrReady = false;
+let ptrRefreshing = false;
+
+document.addEventListener('touchstart', (e) => {
+  if (ptrRefreshing) return;
+  if (window.scrollY <= 0) {
+    ptrStartY = e.touches[0].clientY;
+    ptrPulling = true;
+  }
+}, { passive: true });
+
+document.addEventListener('touchmove', (e) => {
+  if (!ptrPulling || ptrStartY == null) return;
+  const delta = e.touches[0].clientY - ptrStartY;
+  if (delta > 0 && window.scrollY <= 0) {
+    e.preventDefault();
+    const pull = Math.min(delta * 0.55, PTR_MAX);
+    ptrReady = pull >= PTR_THRESHOLD;
+    if (prefersReducedMotion()) {
+      ptrIndicator.style.opacity = ptrReady ? '1' : '0.35';
+      return;
     }
-  }, { passive: true });
-  appContent.addEventListener('touchend', (e) => {
-    if (!pulling) return;
-    pulling = false;
-    const dy = e.changedTouches[0].clientY - startY;
-    if (dy > 80) location.reload();
-  }, { passive: true });
+    appContent.classList.add('ptr-dragging');
+    ptrIndicator.classList.add('ptr-dragging');
+    appContent.style.transform = `translateY(${pull}px)`;
+    ptrIndicator.style.transform = `translateY(${pull - 30}px)`;
+    ptrIndicator.style.opacity = String(Math.min(pull / PTR_THRESHOLD, 1));
+  } else {
+    ptrPulling = false;
+  }
+}, { passive: false });
+
+document.addEventListener('touchend', () => {
+  if (!ptrPulling) return;
+  ptrPulling = false;
+  appContent.classList.remove('ptr-dragging');
+  ptrIndicator.classList.remove('ptr-dragging');
+  if (ptrReady) {
+    triggerPullRefresh();
+  } else {
+    appContent.style.transform = '';
+    ptrIndicator.style.transform = '';
+    ptrIndicator.style.opacity = '';
+  }
+  ptrReady = false;
+});
+
+async function triggerPullRefresh() {
+  ptrRefreshing = true;
+  ptrIndicator.style.opacity = '1';
+  if (!prefersReducedMotion()) {
+    ptrIndicator.classList.add('ptr-spinning');
+    appContent.style.transform = 'translateY(56px)';
+    ptrIndicator.style.transform = 'translateY(24px)';
+  }
+
+  try {
+    await Promise.allSettled([
+      fetch('manifest.webmanifest', { cache: 'reload' }),
+      fetch('index.html', { cache: 'reload' }),
+      fetch('app.js', { cache: 'reload' }),
+      fetch('style.css', { cache: 'reload' }),
+      fetch('sw.js', { cache: 'reload' }),
+    ]);
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) {
+        await reg.update();
+        const worker = reg.waiting || reg.installing;
+        if (worker) {
+          worker.postMessage('SKIP_WAITING');
+          await new Promise((resolve) => {
+            let done = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              done = true;
+              resolve();
+            }, { once: true });
+            setTimeout(() => { if (!done) resolve(); }, 1500);
+          });
+        }
+      }
+    }
+  } catch {
+    // Network or SW issue — fall through to a plain reload.
+  }
+  window.location.reload();
 }

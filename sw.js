@@ -1,4 +1,4 @@
-const CACHE = 'tappd-in-v0.4.1-beta';
+const CACHE = 'tappd-in-v0.4.2-beta';
 const ASSETS = [
   './',
   './index.html',
@@ -12,7 +12,7 @@ const ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE).then((cache) => cache.addAll(ASSETS))
   );
 });
 
@@ -28,13 +28,13 @@ self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
+// Network-first for same-origin files. Cache-first served the previous
+// app.js on pull-to-refresh: sw.js rarely changes, so registration.update()
+// often found no new worker, and the reload still read the old cache.
+// Offline or a hung request falls back to whatever was cached last time.
 const NETWORK_TIMEOUT_MS = 8000;
 
 function fetchWithTimeout(request) {
-  // Avoid AbortController on navigate — Safari PWA can abort first paint.
-  if (request.mode === 'navigate') {
-    return fetch(request);
-  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), NETWORK_TIMEOUT_MS);
   return fetch(request, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
