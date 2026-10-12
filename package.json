@@ -1,7 +1,7 @@
 {
   "name": "tappd-in",
   "private": true,
-  "version": "0.5.0-beta",
+  "version": "0.6.0-beta",
   "description": "Quick brewery/beer entry → exact Untappd URLs (PWA)",
   "scripts": {
     "test": "node --test test/*.test.mjs",

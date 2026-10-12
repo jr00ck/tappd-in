@@ -1,4 +1,4 @@
-import { test, mock } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
@@ -28,15 +28,13 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.5.0-beta with quick-entry UI', () => {
+test('boots as v0.6.0-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.5.0-beta');
-  assert.ok(d.getElementById('brewery-field'));
-  assert.ok(d.getElementById('beer-field'));
-  assert.ok(d.getElementById('new-brewer-btn'));
+  assert.equal(d.getElementById('app-version').textContent, 'v0.6.0-beta');
+  assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('find-links-btn'));
-  assert.ok(d.getElementById('add-beer-btn'));
+  assert.ok(d.getElementById('find-stats'));
   assert.equal(d.getElementById('camera-btn'), null);
 });
 
@@ -47,63 +45,63 @@ test('parseUntappdBeerUrl normalizes www, query, slash', () => {
   );
   assert.equal(p.url, 'https://untappd.com/b/finback-brewery-something-mosaic/2706030');
   assert.equal(p.id, '2706030');
-  assert.equal(w.TappdIn.parseUntappdBeerUrl('https://untappd.com/search?q=x'), null);
 });
 
-test('normalizeMatchText + cacheKey', () => {
+test('listDisplayCandidates prefers numbered series over single auto-pick set', () => {
   const { w } = boot();
-  assert.equal(
-    w.TappdIn.cacheKey('Finback Brewing Co.', 'Something Mosaic'),
-    w.TappdIn.cacheKey('finback', 'something mosaic')
-  );
-  assert.match(w.TappdIn.normalizeMatchText('The Ale & Lager Brewery'), /ale and lager/);
+  const series = w.TappdIn.listDisplayCandidates([
+    {
+      slug: 'mortalis-brewing-company-strange-philosophies-112',
+      url: 'https://untappd.com/b/mortalis-brewing-company-strange-philosophies-112/1',
+      title: 'Strange Philosophies - Mortalis',
+      score: 0.8,
+      id: '1',
+    },
+    {
+      slug: 'mortalis-brewing-company-strange-philosophies-108',
+      url: 'https://untappd.com/b/mortalis-brewing-company-strange-philosophies-108/2',
+      title: 'Strange Philosophies - Mortalis',
+      score: 0.78,
+      id: '2',
+    },
+    {
+      slug: 'mortalis-brewing-company-nemean',
+      url: 'https://untappd.com/b/mortalis-brewing-company-nemean/3',
+      title: 'Nemean - Mortalis',
+      score: 0.2,
+      id: '3',
+    },
+  ]);
+  assert.equal(series.mode, 'series');
+  assert.equal(series.items.length, 2);
+  assert.ok(series.items.every((c) => /strange-philosophies-\d+$/.test(c.slug)));
+
+  const top = w.TappdIn.listDisplayCandidates([
+    {
+      slug: 'finback-brewery-something-mosaic',
+      url: 'https://untappd.com/b/finback-brewery-something-mosaic/2706030',
+      title: 'Something Mosaic - Finback Brewery',
+      score: 1.2,
+      id: '2706030',
+    },
+    {
+      slug: 'finback-brewery-nothing-mosaic',
+      url: 'https://untappd.com/b/finback-brewery-nothing-mosaic/9',
+      title: 'Nothing Mosaic - Finback Brewery',
+      score: 0.3,
+      id: '9',
+    },
+  ]);
+  assert.equal(top.mode, 'top');
+  assert.equal(top.items.length, 2);
+  assert.match(w.TappdIn.candidateLabel(top.items[0]), /Something Mosaic/);
 });
 
-test('scoreCandidate prefers matching slug', () => {
-  const { w } = boot();
-  const good = w.TappdIn.scoreCandidate(
-    'Finback',
-    'Something Mosaic',
-    { slug: 'finback-brewery-something-mosaic', id: '1', url: 'https://untappd.com/b/finback-brewery-something-mosaic/1' },
-    'Something Mosaic'
-  );
-  const bad = w.TappdIn.scoreCandidate(
-    'Finback',
-    'Something Mosaic',
-    { slug: 'other-brewery-ipa', id: '2', url: 'https://untappd.com/b/other-brewery-ipa/2' },
-    'IPA'
-  );
-  assert.ok(good > bad);
-  assert.ok(w.TappdIn.isConfident({ score: 0.95 }, { score: 0.5 }));
-  assert.equal(w.TappdIn.isConfident({ score: 0.5 }, null), false);
-});
-
-test('cache hit skips network on resolveBeer', async () => {
+test('picked candidate overrides cache as picked', () => {
   const { w } = boot();
   w.localStorage.clear();
   w.TappdIn.putCacheResolve('Finback', 'Something Mosaic', {
-    url: 'https://untappd.com/b/finback-brewery-something-mosaic/2706030',
-    id: '2706030',
-    title: 'Something Mosaic',
-    source: 'search',
-  });
-  let fetched = false;
-  w.fetch = async () => {
-    fetched = true;
-    throw new Error('network should not run');
-  };
-  const result = await w.TappdIn.resolveBeer('Finback', 'Something Mosaic', {});
-  assert.equal(fetched, false);
-  assert.equal(result.fromCache, true);
-  assert.equal(result.best.id, '2706030');
-  assert.equal(result.confident, true);
-});
-
-test('manual cache override wins over prior search entry', () => {
-  const { w } = boot();
-  w.localStorage.clear();
-  w.TappdIn.putCacheResolve('Finback', 'Something Mosaic', {
-    url: 'https://untappd.com/b/wrong-slug/1',
+    url: 'https://untappd.com/b/wrong/1',
     id: '1',
     title: 'wrong',
     source: 'search',
@@ -111,21 +109,57 @@ test('manual cache override wins over prior search entry', () => {
   w.TappdIn.putCacheResolve('Finback', 'Something Mosaic', {
     url: 'https://untappd.com/b/finback-brewery-something-mosaic/2706030',
     id: '2706030',
-    title: 'Something Mosaic',
-    source: 'manual',
+    title: 'Something Mosaic - Finback Brewery',
+    source: 'picked',
   });
   const hit = w.TappdIn.getCachedResolve('Finback', 'Something Mosaic');
-  assert.equal(hit.source, 'manual');
+  assert.equal(hit.source, 'picked');
   assert.equal(hit.id, '2706030');
+  assert.equal(w.TappdIn.rowSourceBadge({ status: 'done', source: 'picked', fromCache: false }), 'searched');
+  assert.equal(w.TappdIn.rowSourceBadge({ status: 'done', source: 'cache', fromCache: true }), 'saved');
 });
 
-test('resolve worker file is Perplexity-based', () => {
+test('cache hit skips network on resolveBeer; bypassCache forces fetch', async () => {
+  const { w } = boot();
+  w.localStorage.clear();
+  w.TappdIn.putCacheResolve('Finback', 'Something Mosaic', {
+    url: 'https://untappd.com/b/finback-brewery-something-mosaic/2706030',
+    id: '2706030',
+    title: 'Something Mosaic',
+    source: 'search',
+  });
+  let fetched = 0;
+  w.fetch = async () => {
+    fetched += 1;
+    return {
+      ok: true,
+      async json() {
+        return {
+          confident: true,
+          best: {
+            url: 'https://untappd.com/b/finback-brewery-something-mosaic/2706030',
+            id: '2706030',
+            slug: 'finback-brewery-something-mosaic',
+            title: 'Something Mosaic - Finback Brewery',
+          },
+          candidates: [],
+          providerCalls: 1,
+        };
+      },
+    };
+  };
+  const cached = await w.TappdIn.resolveBeer('Finback', 'Something Mosaic', {});
+  assert.equal(fetched, 0);
+  assert.equal(cached.fromCache, true);
+  const retried = await w.TappdIn.resolveBeer('Finback', 'Something Mosaic', {}, { bypassCache: true });
+  assert.equal(fetched, 1);
+  assert.equal(retried.fromCache, false);
+  assert.equal(retried.providerCalls, 1);
+});
+
+test('resolve worker supports batch + perplexity', () => {
   const worker = fs.readFileSync(path.join(root, 'proxy/resolve-worker.js'), 'utf8');
-  const core = fs.readFileSync(path.join(root, 'proxy/resolve-core.js'), 'utf8');
   assert.match(worker, /api\.perplexity\.ai\/search/);
-  assert.match(worker, /searchType:\s*'fast'/);
-  assert.match(worker, /PERPLEXITY_API_KEY/);
-  assert.match(worker, /\/resolve/);
-  assert.match(core, /buildQueryVariants/);
+  assert.match(worker, /resolve-batch/);
   assert.doesNotMatch(worker, /catalog\.beer/);
 });

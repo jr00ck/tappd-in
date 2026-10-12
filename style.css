@@ -610,6 +610,139 @@ textarea:focus {
   font-style: italic;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.brewery-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.brewery-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  background: rgba(232, 168, 56, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(232, 168, 56, 0.35);
+  border-radius: 999px;
+  min-height: 40px;
+  padding: 6px 14px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.brewery-chip::after {
+  content: "✎";
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
+.session-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.find-stats {
+  margin: 0;
+}
+
+.beer-row-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  color: var(--text-dim);
+}
+
+.source-badge-saved {
+  color: #8fd0a2;
+  border-color: rgba(143, 208, 162, 0.35);
+}
+
+.source-badge-searched {
+  color: var(--accent);
+  border-color: rgba(232, 168, 56, 0.35);
+}
+
+.beer-row-pending {
+  position: relative;
+  touch-action: pan-y;
+}
+
+.pending-actions {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+}
+
+.remove-beer {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.retry-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 8px 4px;
+  min-height: 44px;
+}
+
+.beer-edit-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.beer-edit {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+}
+
+.cand-main {
+  display: block;
+  text-align: left;
+}
+
 .session-groups {
   display: flex;
   flex-direction: column;

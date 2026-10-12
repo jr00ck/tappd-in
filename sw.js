@@ -1,4 +1,4 @@
-const CACHE = 'tappd-in-v0.5.0-beta';
+const CACHE = 'tappd-in-v0.6.0-beta';
 const ASSETS = [
   './',
   './index.html',

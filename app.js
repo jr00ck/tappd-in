@@ -6,16 +6,16 @@ const CACHE_KEY = 'tappd-in.resolveCache';
 const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 
-const APP_VERSION = '0.5.0-beta';
+const APP_VERSION = '0.6.0-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
-  'Add beers to a list first, then Find links once (batched Search — fewer credits)',
-  'Friendlier Settings; compact match rows; Untappd app links for beers',
-  'Smarter matching for names like X-Raying … (and small typos)',
-  'Pull-to-refresh installs updates; network-first service worker',
+  'No-match recovery: pick candidates or numbered variants; Retry one beer',
+  'Faster entry: brewery chip, swipe-to-remove pending beers',
+  'Status badges: saved vs searched + provider-call summary',
+  'List → Find links (batched Search) with Untappd app open on phones',
 ];
 
 function prefersReducedMotion() {
@@ -294,8 +294,8 @@ function clearSessionKeepCache() {
 
 // --- Resolve ---
 
-async function resolveBeer(brewery, beer, settings) {
-  const cached = getCachedResolve(brewery, beer);
+async function resolveBeer(brewery, beer, settings, opts = {}) {
+  const cached = opts.bypassCache ? null : getCachedResolve(brewery, beer);
   if (cached) {
     return {
       fromCache: true,
@@ -440,10 +440,73 @@ window.TappdIn = {
   beerOpenHref,
   resolveBeer,
   resolveBeerBatch,
+  slugSeriesBase,
+  parseTitleParts,
+  candidateLabel,
+  listDisplayCandidates,
+  rowSourceBadge,
   DEFAULT_RESOLVE_URL,
   DEFAULT_BATCH_URL,
   BEER_URL_RE,
 };
+
+
+// --- Candidate / series helpers (exported on TappdIn) ---
+
+function slugSeriesBase(slug) {
+  return String(slug || '').toLowerCase().replace(/-\d+$/, '');
+}
+
+function parseTitleParts(title) {
+  const t = String(title || '').trim();
+  if (t.includes(' - ')) {
+    const beer = t.split(' - ')[0].trim();
+    let brewery = t.slice(t.indexOf(' - ') + 3).trim();
+    brewery = brewery.replace(/\s*[|·].*$/, '').replace(/\s*-\s*Untappd\s*$/i, '').trim();
+    return { beer, brewery };
+  }
+  return { beer: t, brewery: '' };
+}
+
+function candidateLabel(c) {
+  const parts = parseTitleParts(c.title || c.slug || '');
+  const scorePct = typeof c.score === 'number' ? ` · ${Math.round(Math.min(c.score, 1.35) / 1.35 * 100)}%` : '';
+  if (parts.brewery) return `${parts.beer} · ${parts.brewery}${scorePct}`;
+  return `${parts.beer || c.slug || 'Beer'}${scorePct}`;
+}
+
+/** Prefer numbered series picker when ≥2 share a trailing-number base; else top 3 non-zero. */
+function listDisplayCandidates(candidates) {
+  const nonzero = (candidates || []).filter((c) => c && c.url && (c.score || 0) > 0);
+  if (!nonzero.length) return { mode: 'none', items: [] };
+
+  const withNum = nonzero.filter((c) => /-\d+$/.test(c.slug || ''));
+  const byBase = new Map();
+  for (const c of withNum) {
+    const base = slugSeriesBase(c.slug);
+    if (!byBase.has(base)) byBase.set(base, []);
+    byBase.get(base).push(c);
+  }
+  let series = null;
+  for (const group of byBase.values()) {
+    if (group.length >= 2 && (!series || group.length > series.length)) series = group;
+  }
+  if (series) {
+    series = series.slice().sort((a, b) => String(a.slug).localeCompare(String(b.slug)));
+    return { mode: 'series', items: series.slice(0, 5) };
+  }
+  return {
+    mode: 'top',
+    items: nonzero.slice().sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 3),
+  };
+}
+
+function rowSourceBadge(row) {
+  if (!row || (row.status || '') === 'pending' || row.status === 'loading') return '';
+  if (row.fromCache || row.source === 'cache') return 'saved';
+  if (row.source === 'picked' || row.source === 'manual' || row.source === 'search') return 'searched';
+  return row.confident ? 'searched' : '';
+}
 
 // --- DOM ---
 
@@ -455,6 +518,9 @@ const clearCacheBtn = document.getElementById('clear-cache-btn');
 const clearSessionBtn = document.getElementById('clear-session-btn');
 const settingsStatus = document.getElementById('settings-status');
 const breweryField = document.getElementById('brewery-field');
+const breweryFieldWrap = document.getElementById('brewery-field-wrap');
+const breweryChipRow = document.getElementById('brewery-chip-row');
+const breweryChip = document.getElementById('brewery-chip');
 const beerField = document.getElementById('beer-field');
 const brewerySuggestions = document.getElementById('brewery-suggestions');
 const addBeerBtn = document.getElementById('add-beer-btn');
@@ -463,12 +529,14 @@ const newBrewerBtn = document.getElementById('new-brewer-btn');
 const entryStatus = document.getElementById('entry-status');
 const sessionPanel = document.getElementById('session-panel');
 const sessionGroups = document.getElementById('session-groups');
+const findStatsEl = document.getElementById('find-stats');
 const appVersionEl = document.getElementById('app-version');
 const updatedBadge = document.getElementById('updated-badge');
 const whatsNew = document.getElementById('whats-new');
 
 let session = loadSession();
 let activeBrewery = '';
+let lastFindStats = null;
 
 function setHint(el, msg, kind) {
   if (!el) return;
@@ -485,6 +553,19 @@ function refreshBrewerySuggestions() {
   brewerySuggestions.innerHTML = hist
     .map((h) => `<option value="${escapeHtml(h.name)}"></option>`)
     .join('');
+}
+
+function syncBreweryChip() {
+  const name = (activeBrewery || breweryField.value || '').trim();
+  if (name) {
+    activeBrewery = name;
+    breweryChip.textContent = name;
+    breweryChipRow.hidden = false;
+    breweryFieldWrap.hidden = true;
+  } else {
+    breweryChipRow.hidden = true;
+    breweryFieldWrap.hidden = false;
+  }
 }
 
 function ensureGroup(brewery) {
@@ -516,14 +597,26 @@ function updateFindButton() {
   findLinksBtn.textContent = n ? `Find links (${n})` : 'Find links';
 }
 
+function updateFindStats() {
+  if (!findStatsEl) return;
+  if (!lastFindStats) {
+    findStatsEl.hidden = true;
+    findStatsEl.textContent = '';
+    return;
+  }
+  const { searched = 0, saved = 0, providerCalls = 0 } = lastFindStats;
+  findStatsEl.hidden = false;
+  findStatsEl.textContent = `${searched} searched · ${saved} saved · ${providerCalls} provider call${providerCalls === 1 ? '' : 's'}`;
+}
+
 function searchLinkHtml(brewery, beer) {
   const href = escapeHtml(untappdSearchHref(brewery, beer));
   return `<a class="untappd-search-link" href="${href}" target="_blank" rel="noopener noreferrer">${U_MARK}<span>Search in Untappd</span></a>`;
 }
 
-function fixPanelHtml(groupId, idx, open) {
+function fixPanelHtml(groupId, idx) {
   return `
-    <div class="fix-panel"${open ? '' : ' hidden'}>
+    <div class="fix-panel" hidden>
       <label class="hint" for="fix-${groupId}-${idx}">Paste the correct Untappd beer link</label>
       <div class="fix-row">
         <input type="url" id="fix-${groupId}-${idx}" class="fix-url" data-g="${escapeHtml(groupId)}" data-b="${idx}"
@@ -533,10 +626,30 @@ function fixPanelHtml(groupId, idx, open) {
     </div>`;
 }
 
+function candidatesHtml(group, row, idx) {
+  const display = listDisplayCandidates(row.candidates || []);
+  if (display.mode === 'none') {
+    return `<p class="hint">No close Untappd matches from search.</p>`;
+  }
+  const heading = display.mode === 'series'
+    ? 'Numbered variants — pick one:'
+    : 'Not sure — pick one:';
+  const items = display.items.map((c, cidx) => `
+    <li>
+      <button type="button" class="cand-btn" data-g="${escapeHtml(group.id)}" data-b="${idx}" data-c="${cidx}"
+        data-url="${escapeHtml(c.url)}">
+        <span class="cand-main">${escapeHtml(candidateLabel(c))}</span>
+      </button>
+    </li>`).join('');
+  return `<p class="hint">${heading}</p><ul class="cand-list">${items}</ul>`;
+}
+
 function renderSession() {
   const has = session.groups.length > 0;
   sessionPanel.hidden = !has;
   updateFindButton();
+  updateFindStats();
+  syncBreweryChip();
   if (!has) {
     sessionGroups.innerHTML = '';
     return;
@@ -545,52 +658,65 @@ function renderSession() {
   sessionGroups.innerHTML = session.groups.map((group) => {
     const beersHtml = group.beers.map((row, idx) => {
       const status = row.status || 'pending';
+      const badge = rowSourceBadge(row);
+      const badgeHtml = badge
+        ? `<span class="source-badge source-badge-${badge}">${badge}</span>`
+        : '';
       let body = '';
       if (status === 'pending') {
-        body = `<p class="hint pending-hint">Ready — tap Find links</p>`;
+        body = `
+          <p class="hint pending-hint">Ready — tap Find links</p>
+          <div class="pending-actions">
+            <button type="button" class="remove-beer" data-g="${escapeHtml(group.id)}" data-b="${idx}"
+              aria-label="Remove ${escapeHtml(row.beer)}">×</button>
+          </div>`;
       } else if (status === 'loading') {
         body = `<p class="hint">Finding…</p>`;
       } else if (status === 'error') {
         body = `<p class="hint hint-error">${escapeHtml(row.error || 'Failed')}</p>
-          ${searchLinkHtml(group.brewery, row.beer)}`;
-      } else if (row.url && row.confident) {
+          <div class="match-row match-row-actions">
+            ${searchLinkHtml(group.brewery, row.beer)}
+            <button type="button" class="retry-btn" data-g="${escapeHtml(group.id)}" data-b="${idx}">Retry</button>
+            <button type="button" class="fix-inline" data-g="${escapeHtml(group.id)}" data-b="${idx}">Fix</button>
+          </div>
+          ${fixPanelHtml(group.id, idx)}`;
+      } else if (row.url && row.confident && !row.forceVariantPick) {
         const href = escapeHtml(beerOpenHref(row.url, row.beerId || row.id));
         body = `
           <div class="match-row">
-            <a class="beer-link" href="${href}">${escapeHtml(row.title || row.beer)}</a>
-            <button type="button" class="fix-inline" data-g="${escapeHtml(group.id)}" data-b="${idx}"
-              aria-expanded="false">Fix</button>
+            <a class="beer-link" href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.title || row.beer)}</a>
+            <button type="button" class="retry-btn" data-g="${escapeHtml(group.id)}" data-b="${idx}">Retry</button>
+            <button type="button" class="fix-inline" data-g="${escapeHtml(group.id)}" data-b="${idx}">Fix</button>
           </div>
-          ${fixPanelHtml(group.id, idx, false)}`;
+          ${fixPanelHtml(group.id, idx)}`;
       } else {
-        const cands = (row.candidates || []).filter((c) => (c.score || 0) > 0).slice(0, 3);
-        const candHtml = cands.length
-          ? `<ul class="cand-list">${cands.map((c, cidx) => `
-              <li>
-                <button type="button" class="cand-btn" data-g="${escapeHtml(group.id)}" data-b="${idx}" data-c="${cidx}">
-                  ${escapeHtml(c.title || c.slug)}
-                </button>
-              </li>`).join('')}</ul>`
-          : `<p class="hint">No close Untappd matches from search.</p>`;
         body = `
-          <p class="hint">Not sure — pick one or search:</p>
-          ${candHtml}
+          ${candidatesHtml(group, row, idx)}
+          <div class="beer-edit-row">
+            <label class="visually-hidden" for="edit-${group.id}-${idx}">Edit beer name</label>
+            <input type="text" id="edit-${group.id}-${idx}" class="beer-edit" data-g="${escapeHtml(group.id)}" data-b="${idx}"
+              value="${escapeHtml(row.beer)}" autocomplete="off">
+            <button type="button" class="retry-btn" data-g="${escapeHtml(group.id)}" data-b="${idx}">Retry</button>
+          </div>
           <div class="match-row match-row-actions">
             ${searchLinkHtml(group.brewery, row.beer)}
-            <button type="button" class="fix-inline" data-g="${escapeHtml(group.id)}" data-b="${idx}"
-              aria-expanded="false">Fix</button>
+            <button type="button" class="fix-inline" data-g="${escapeHtml(group.id)}" data-b="${idx}">Fix</button>
           </div>
-          ${fixPanelHtml(group.id, idx, false)}`;
+          ${fixPanelHtml(group.id, idx)}`;
       }
 
+      const swipeClass = status === 'pending' ? ' beer-row-pending' : '';
       return `
-        <li class="beer-row" data-g="${escapeHtml(group.id)}" data-b="${idx}">
+        <li class="beer-row${swipeClass}" data-g="${escapeHtml(group.id)}" data-b="${idx}">
           <div class="beer-row-top">
             <strong>${escapeHtml(row.beer)}</strong>
-            <label class="had-toggle">
-              <input type="checkbox" class="had-check" data-g="${escapeHtml(group.id)}" data-b="${idx}"
-                ${row.had ? 'checked' : ''}> Had
-            </label>
+            <span class="beer-row-meta">
+              ${badgeHtml}
+              <label class="had-toggle">
+                <input type="checkbox" class="had-check" data-g="${escapeHtml(group.id)}" data-b="${idx}"
+                  ${row.had ? 'checked' : ''}> Had
+              </label>
+            </span>
           </div>
           ${body}
         </li>`;
@@ -623,6 +749,7 @@ function addBeerToList(brewery, beer) {
   );
   if (dup) {
     setHint(entryStatus, 'Already on the list.', 'ok');
+    syncBreweryChip();
     return true;
   }
 
@@ -641,17 +768,37 @@ function addBeerToList(brewery, beer) {
 function applyResolvedRow(row, result) {
   row.status = 'done';
   row.fromCache = !!result.fromCache;
-  row.source = result.source;
-  row.confident = !!result.confident;
-  row.candidates = result.candidates || [];
+  row.source = result.fromCache ? 'cache' : (result.source || 'search');
   row.untappdSearchUrl = result.untappdSearchUrl || untappdSearchWebUrl(result.brewery, row.beer);
+
+  const rawCands = result.candidates || [];
+  if (result.best?.url && result.best.id) {
+    const hasBest = rawCands.some((c) => c.id === result.best.id);
+    row.candidates = hasBest ? rawCands : [result.best, ...rawCands];
+  } else {
+    row.candidates = rawCands;
+  }
+
+  const display = listDisplayCandidates(row.candidates);
+  if (display.mode === 'series' && display.items.length >= 2) {
+    row.forceVariantPick = true;
+    row.confident = false;
+    row.url = null;
+    row.title = null;
+    row.beerId = null;
+    row.slug = null;
+    row.candidates = display.items;
+    return;
+  }
+
+  row.forceVariantPick = false;
+  row.confident = !!result.confident;
   if (result.confident && result.best?.url) {
     row.url = result.best.url;
     row.title = result.best.title || row.beer;
     row.beerId = result.best.id;
     row.slug = result.best.slug;
   } else {
-    // Don't promote weak look-alikes as the primary link
     row.url = null;
     row.title = null;
     row.beerId = null;
@@ -659,13 +806,48 @@ function applyResolvedRow(row, result) {
   }
 }
 
+function pickCandidate(gid, bidx, url) {
+  const found = findRow(gid, bidx);
+  if (!found) return;
+  const parsed = parseUntappdBeerUrl(url);
+  if (!parsed) return;
+  const c = (found.row.candidates || []).find((x) => x.url === url) || {};
+  found.row.url = parsed.url;
+  found.row.beerId = parsed.id;
+  found.row.slug = parsed.slug;
+  found.row.title = c.title || found.row.beer;
+  found.row.confident = true;
+  found.row.forceVariantPick = false;
+  found.row.fromCache = false;
+  found.row.source = 'picked';
+  found.row.status = 'done';
+  putCacheResolve(found.group.brewery, found.row.beer, {
+    url: parsed.url,
+    id: parsed.id,
+    title: found.row.title,
+    source: 'picked',
+  });
+  saveSession(session);
+  renderSession();
+  setHint(entryStatus, 'Saved your pick.', 'ok');
+}
+
+function removeBeer(gid, bidx) {
+  const group = session.groups.find((g) => g.id === gid);
+  if (!group) return;
+  group.beers.splice(Number(bidx), 1);
+  if (!group.beers.length) {
+    session.groups = session.groups.filter((g) => g !== group);
+  }
+  saveSession(session);
+  renderSession();
+}
+
 async function findPendingLinks() {
   const jobs = [];
   for (const group of session.groups) {
-    group.beers.forEach((row, idx) => {
-      if ((row.status || 'pending') === 'pending') {
-        jobs.push({ group, row, idx });
-      }
+    group.beers.forEach((row) => {
+      if ((row.status || 'pending') === 'pending') jobs.push({ group, row });
     });
   }
   if (!jobs.length) {
@@ -686,28 +868,27 @@ async function findPendingLinks() {
     const byKey = new Map(
       (batch.results || []).map((r) => [`${normalizeMatchText(r.brewery)}|${normalizeMatchText(r.beer)}`, r])
     );
+    let saved = 0;
+    let searched = 0;
     for (const j of jobs) {
       const key = `${normalizeMatchText(j.group.brewery)}|${normalizeMatchText(j.row.beer)}`;
       const result = byKey.get(key);
-      if (!result) {
+      if (!result || result.error) {
         j.row.status = 'error';
-        j.row.error = 'No result';
-        continue;
-      }
-      if (result.error) {
-        j.row.status = 'error';
-        j.row.error = result.error;
+        j.row.error = (result && result.error) || 'No result';
+        searched += 1;
         continue;
       }
       applyResolvedRow(j.row, result);
+      if (result.fromCache) saved += 1;
+      else searched += 1;
     }
-    const linked = jobs.filter((j) => j.row.confident).length;
-    const calls = batch.providerCalls || 0;
-    setHint(
-      entryStatus,
-      `Done — ${linked}/${jobs.length} confident${calls ? ` · ${calls} search call${calls === 1 ? '' : 's'}` : ''}.`,
-      'ok'
-    );
+    lastFindStats = {
+      searched,
+      saved,
+      providerCalls: batch.providerCalls || 0,
+    };
+    setHint(entryStatus, 'Done.', 'ok');
   } catch (err) {
     for (const j of jobs) {
       if (j.row.status === 'loading') {
@@ -716,6 +897,37 @@ async function findPendingLinks() {
       }
     }
     setHint(entryStatus, err && err.message ? err.message : 'Resolve failed', 'error');
+  }
+  saveSession(session);
+  renderSession();
+}
+
+async function retryBeer(gid, bidx) {
+  const found = findRow(gid, bidx);
+  if (!found) return;
+  const edit = sessionGroups.querySelector(`.beer-edit[data-g="${gid}"][data-b="${bidx}"]`);
+  if (edit && edit.value.trim()) {
+    found.row.beer = edit.value.trim();
+  }
+  found.row.status = 'loading';
+  found.row.error = null;
+  saveSession(session);
+  renderSession();
+  setHint(entryStatus, `Retrying ${found.row.beer}…`);
+  try {
+    const result = await resolveBeer(found.group.brewery, found.row.beer, loadSettings(), { bypassCache: true });
+    applyResolvedRow(found.row, result);
+    const calls = result.providerCalls || (result.fromCache ? 0 : 2);
+    lastFindStats = {
+      searched: 1,
+      saved: result.fromCache ? 1 : 0,
+      providerCalls: result.fromCache ? 0 : calls,
+    };
+    setHint(entryStatus, result.confident ? 'Linked.' : 'Still not sure — pick a candidate.', result.confident ? 'ok' : undefined);
+  } catch (err) {
+    found.row.status = 'error';
+    found.row.error = err && err.message ? err.message : 'Retry failed';
+    setHint(entryStatus, found.row.error, 'error');
   }
   saveSession(session);
   renderSession();
@@ -742,6 +954,7 @@ function applyManualUrl(gid, bidx, urlInput) {
   row.slug = parsed.slug;
   row.title = row.beer;
   row.confident = true;
+  row.forceVariantPick = false;
   row.status = 'done';
   row.source = 'manual';
   row.fromCache = false;
@@ -758,10 +971,12 @@ function applyManualUrl(gid, bidx, urlInput) {
 }
 
 function tryAddFromFields() {
-  const brewery = breweryField.value.trim() || activeBrewery;
+  const brewery = (activeBrewery || breweryField.value).trim();
   const beer = beerField.value.trim();
   if (!brewery) {
     setHint(entryStatus, 'Set a brewery first.', 'error');
+    breweryFieldWrap.hidden = false;
+    breweryChipRow.hidden = true;
     breweryField.focus();
     return;
   }
@@ -804,6 +1019,7 @@ clearCacheBtn.addEventListener('click', () => {
 clearSessionBtn.addEventListener('click', () => {
   clearSessionKeepCache();
   session = loadSession();
+  lastFindStats = null;
   renderSession();
   setHint(settingsStatus, 'Session cleared (saved links kept).', 'ok');
 });
@@ -815,15 +1031,33 @@ newBrewerBtn.addEventListener('click', () => {
   activeBrewery = '';
   breweryField.value = '';
   beerField.value = '';
+  syncBreweryChip();
   breweryField.focus();
   setHint(entryStatus, 'New brewery — type a name.');
+});
+
+breweryChip.addEventListener('click', () => {
+  breweryField.value = activeBrewery;
+  breweryChipRow.hidden = true;
+  breweryFieldWrap.hidden = false;
+  breweryField.focus();
+  breweryField.select();
 });
 
 breweryField.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
     activeBrewery = breweryField.value.trim();
+    syncBreweryChip();
     beerField.focus();
+  }
+});
+
+breweryField.addEventListener('change', () => {
+  const v = breweryField.value.trim();
+  if (v) {
+    activeBrewery = v;
+    syncBreweryChip();
   }
 });
 
@@ -834,6 +1068,16 @@ beerField.addEventListener('keydown', (e) => {
 });
 
 sessionGroups.addEventListener('click', (e) => {
+  const removeBtn = e.target.closest('.remove-beer');
+  if (removeBtn) {
+    removeBeer(removeBtn.dataset.g, removeBtn.dataset.b);
+    return;
+  }
+  const retry = e.target.closest('.retry-btn');
+  if (retry) {
+    retryBeer(retry.dataset.g, retry.dataset.b);
+    return;
+  }
   const fixToggle = e.target.closest('.fix-inline');
   if (fixToggle) {
     const rowEl = fixToggle.closest('.beer-row');
@@ -847,26 +1091,7 @@ sessionGroups.addEventListener('click', (e) => {
   }
   const cand = e.target.closest('.cand-btn');
   if (cand) {
-    const found = findRow(cand.dataset.g, cand.dataset.b);
-    if (!found) return;
-    const c = (found.row.candidates || []).filter((x) => (x.score || 0) > 0 || x.url)[Number(cand.dataset.c)];
-    if (!c?.url) return;
-    const parsed = parseUntappdBeerUrl(c.url);
-    if (!parsed) return;
-    found.row.url = parsed.url;
-    found.row.beerId = parsed.id;
-    found.row.slug = parsed.slug;
-    found.row.title = c.title || found.row.beer;
-    found.row.confident = true;
-    found.row.source = 'search';
-    putCacheResolve(found.group.brewery, found.row.beer, {
-      url: parsed.url,
-      id: parsed.id,
-      title: found.row.title,
-      source: 'search',
-    });
-    saveSession(session);
-    renderSession();
+    pickCandidate(cand.dataset.g, cand.dataset.b, cand.dataset.url);
     return;
   }
   const fix = e.target.closest('.fix-save');
@@ -897,6 +1122,34 @@ sessionGroups.addEventListener('toggle', (e) => {
   }
 }, true);
 
+// Swipe-to-remove pending beers
+let swipeRow = null;
+let swipeStartX = 0;
+sessionGroups.addEventListener('touchstart', (e) => {
+  const row = e.target.closest('.beer-row-pending');
+  if (!row || e.target.closest('button, a, input')) return;
+  swipeRow = row;
+  swipeStartX = e.touches[0].clientX;
+  row.style.transition = 'none';
+}, { passive: true });
+sessionGroups.addEventListener('touchmove', (e) => {
+  if (!swipeRow) return;
+  const dx = e.touches[0].clientX - swipeStartX;
+  if (dx < 0) swipeRow.style.transform = `translateX(${Math.max(dx, -120)}px)`;
+}, { passive: true });
+sessionGroups.addEventListener('touchend', () => {
+  if (!swipeRow) return;
+  const row = swipeRow;
+  swipeRow = null;
+  const dx = parseFloat(String(row.style.transform).replace(/[^-\d.]/g, '')) || 0;
+  row.style.transition = 'transform 0.2s ease';
+  if (dx < -72) {
+    removeBeer(row.dataset.g, row.dataset.b);
+  } else {
+    row.style.transform = '';
+  }
+});
+
 // Version badge + what's new (same pattern as Gassy)
 appVersionEl.textContent = versionLabel();
 const lastSeenVersion = localStorage.getItem(LAST_SEEN_KEY);
@@ -924,8 +1177,10 @@ updatedBadge.addEventListener('click', () => {
 
 openInAppInput.checked = loadSettings().openInApp !== false;
 refreshBrewerySuggestions();
+syncBreweryChip();
 renderSession();
-breweryField.focus();
+if (!activeBrewery) breweryField.focus();
+else beerField.focus();
 
 // --- Service worker: offline caching only. Updates apply via pull-to-refresh. ---
 if ('serviceWorker' in navigator) {

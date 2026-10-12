@@ -57,7 +57,12 @@
   <section class="card entry-card">
     <h2 class="section-title">Add beers</h2>
 
-    <div class="field brewery-field-wrap">
+    <div id="brewery-chip-row" class="brewery-chip-row" hidden>
+      <button type="button" id="brewery-chip" class="brewery-chip" aria-label="Change brewery"></button>
+      <button type="button" id="new-brewer-btn" class="link-btn">+ New brewery</button>
+    </div>
+
+    <div class="field brewery-field-wrap" id="brewery-field-wrap">
       <label for="brewery-field">Brewery</label>
       <input type="text" id="brewery-field" list="brewery-suggestions"
         autocomplete="off" placeholder="e.g. Finback" enterkeyhint="next">
@@ -73,13 +78,15 @@
     <div class="row-actions">
       <button type="button" id="add-beer-btn" class="secondary-outline-btn">Add to list</button>
       <button type="button" id="find-links-btn" class="primary-btn" disabled>Find links</button>
-      <button type="button" id="new-brewer-btn" class="link-btn">New brewery</button>
     </div>
     <p id="entry-status" class="hint" aria-live="polite"></p>
   </section>
 
   <section id="session-panel" class="card" hidden>
-    <h2 class="section-title">This session</h2>
+    <div class="session-header">
+      <h2 class="section-title">This session</h2>
+      <p id="find-stats" class="hint find-stats" hidden></p>
+    </div>
     <div id="session-groups" class="session-groups"></div>
   </section>
 

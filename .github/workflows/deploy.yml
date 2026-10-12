@@ -24,19 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Publish PWA shell + demo video (playable on Pages / README embeds).
+      # PWA shell only — keep Pages storage lean (no demo videos).
       - name: Stage Pages artifact
         run: |
-          mkdir -p _site/demo
+          mkdir -p _site
           cp index.html style.css app.js sw.js manifest.webmanifest package.json _site/
           cp -R icons _site/icons
-          # Demo page + MP4 for public playback (release assets force-download)
-          if ls demo/*.mp4 >/dev/null 2>&1; then
-            cp demo/*.mp4 _site/demo/
-            [ -f demo/index.html ] && cp demo/index.html _site/demo/
-          fi
           [ -f README.md ] && cp README.md _site/ || true
           [ -f CHANGELOG.md ] && cp CHANGELOG.md _site/ || true
+          # Tiny README GIF only (if present) — not hosted as a Pages video library
+          if [ -f docs/demo.gif ]; then
+            mkdir -p _site/docs
+            cp docs/demo.gif _site/docs/
+          fi
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
