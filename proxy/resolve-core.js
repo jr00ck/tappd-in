@@ -56,6 +56,29 @@ export function slugToWords(slug) {
   return normalizeMatchText(String(slug || '').replace(/-/g, ' '));
 }
 
+/** Strip Untappd chrome from search titles ("| Photos", etc.). */
+export function cleanUntappdTitle(title) {
+  let t = String(title || '').trim();
+  if (!t) return '';
+  t = t.replace(/\s*[|·•]\s*Photos?\b/gi, '');
+  t = t.replace(/\s*[|·•]\s*Untappd\b/gi, '');
+  t = t.replace(/\s+on\s+Untappd\s*$/i, '');
+  t = t.replace(/\s{2,}/g, ' ').trim();
+  return t;
+}
+
+/** Split cleaned "{Beer} - {Brewery}" titles Untappd uses in search. */
+export function parseTitleParts(title) {
+  const t = cleanUntappdTitle(title);
+  if (t.includes(' - ')) {
+    const beer = t.split(' - ')[0].trim();
+    let brewery = t.slice(t.indexOf(' - ') + 3).trim();
+    brewery = brewery.replace(/\s*[|·•].*$/, '').replace(/\s*-\s*Untappd\s*$/i, '').trim();
+    return { beer, brewery };
+  }
+  return { beer: t, brewery: '' };
+}
+
 /**
  * Accept beer pages with www, query strings, and extra path segments.
  * Ignore checkins, venues, brewery-only pages.
@@ -278,18 +301,24 @@ export function buildResolveResponse(brewery, beer, pages, extras = {}) {
 
   const consider = (parsed, title, sourceUrl) => {
     if (!parsed) return;
-    const score = scoreCandidate(brewery, beer, parsed, title);
+    const cleaned = cleanUntappdTitle(title) || title;
+    const score = scoreCandidate(brewery, beer, parsed, cleaned);
     const row = {
       url: parsed.url,
       id: parsed.id,
       slug: parsed.slug,
-      title: title || parsed.slug,
+      title: cleaned || parsed.slug,
       score: Math.round(score * 1000) / 1000,
       sourceUrl: sourceUrl || parsed.url,
     };
     debugRows.push(row);
     const prev = byId.get(parsed.id);
-    if (!prev || row.score > prev.score) byId.set(parsed.id, row);
+    if (!prev || row.score > prev.score) {
+      byId.set(parsed.id, row);
+    } else if (row.score === prev.score && cleaned.includes(' - ') && !String(prev.title).includes(' - ')) {
+      // Prefer a real "{Beer} - {Brewery}" title over a photos/chrome title at equal score.
+      byId.set(parsed.id, { ...prev, title: cleaned });
+    }
   };
 
   for (const page of pages || []) {

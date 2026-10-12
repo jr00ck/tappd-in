@@ -53,7 +53,7 @@ npm test
 
 Service workers need HTTPS or `localhost` / `127.0.0.1`.
 
-While iterating, set `PREVIEW_BUILD` in `app.js` (e.g. `'a3'`) so the footer shows `v0.6.1-beta · a3` off Pages. Clear it before tagging.
+While iterating, set `PREVIEW_BUILD` in `app.js` (e.g. `'a3'`) so the footer shows `v0.6.2-beta · a3` off Pages. Clear it before tagging.
 
 ## Releasing
 

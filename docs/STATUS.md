@@ -1,22 +1,29 @@
 # Tappd In — status
 
-**Version:** 0.6.1-beta  
+**Version:** 0.6.2-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
 **Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
 **Updated:** 2026-10-12
 
+## What changed (0.6.2)
+
+- **Match clarity:** rows use linked (green) / pick (amber) / miss (red) / queued states with a status pip + “Open in Untappd” vs “No Untappd match”
+- **Titles:** strip Untappd `| Photos` chrome; show canonical beer name from Untappd, not the raw search title
+- **Brewery chip/header:** normalize to Untappd brewery casing/name after a successful match (e.g. `North park` → `North Park Beer Co`)
+- **Single hit:** auto-accept when Search returns one candidate (no “pick one” with a lone option)
+- **Layout:** compact Add + Find links on one row; Fix/Retry/Search sit on an actions row so they don’t overlap **Had**
+- **Flow copy:** numbered “queue → Find links” hint; session summary as `linked · need a pick · missed · queued`
+
 ## What changed (0.6.1)
 
-- App icon: cartoon of the Untappd profile beer-plush (replaces auto-generated pint); cache-busted icon/manifest URLs + SW cache bump so Add to Home Screen / PTR pick up the new assets
-- Brewery entry: removed native `<datalist>` + autofocus (was popping a mystery 2-brewery dropdown on open/PTR). Replaced with a labeled **Recent** chip row under the brewery field
-- Pages deploy copies only public `icons/*` PNGs/SVG — not `icons/src` reference photos
+- Cartoon beer-plush app icon; cache-busted icon/manifest URLs + SW bump
+- Labeled **Recent** brewery chips (removed native datalist autofocus popup)
+- Pages deploy skips `icons/src`
 
 ## What changed (0.6.0)
 
-- No-match recovery: top non-zero candidates + numbered-series picker; pick → cache `picked`
-- Per-row Retry (single-beer multi-variant, bypass cache, ≤2 provider calls); inline rename
-- Brewery chip; swipe/× remove pending beers; saved vs searched badges; find summary line
-- README rewritten for list→Find links product (no OCR). Demo is a tiny GIF in `docs/` (not on Pages video storage)
+- No-match recovery: candidates + numbered-series picker; per-row Retry
+- Brewery chip; swipe/× remove; list→Find links product
 
 ## Resolve spot-checks
 
@@ -24,24 +31,23 @@
 |-------|--------|--------|
 | Finback / Something Mosaic | `/…-something-mosaic/2706030` | Confident |
 | Ballast Point / Sculpin | `/…-sculpin/5558` | Confident |
-| North Park / X-Raying Rakau | `/…-x-raying-rakau/6899298` | Confident when spelled correctly |
-| North Park / x-raying racau | Often no page in Search | Use Retry / Search / Fix; soft-typo helps only if Rakau URL is returned |
-| Mortalis / Strange Philosophies | May surface numbered variants | 0.6 lists variants instead of auto-picking |
+| North Park / X-Raying Rakau | `/…-x-raying-rakau/6899298` | Title cleaned; brewery normalized |
+| North Park / Lupulin | May miss on batch (1 query/beer) | Use **Retry** (multi-variant) or Search Untappd |
+| Mortalis / Strange Philosophies | Numbered variants | Pick UI when ≥2 series hits |
 
 ## Known limits
 
+- Batch (2+ beers): 1 query/beer; single Retry uses full multi-variant — explains mobile vs desktop hit differences
 - Untappd has no public search deep-link; beer pages use `untappd://beer/{id}` on touch
-- Multi-query `max_results` is a shared budget across queries
-- Provider may omit the true beer for typos/obscure releases (≤2 calls/beer on Retry)
-- iOS Add to Home Screen may keep a cached icon until the bookmark is removed and re-added after deploy
+- iOS Add to Home Screen may keep a cached icon until the bookmark is removed and re-added
 
 ## Assumption conflicts
 
-- Batch (2+ beers): 1 query/beer per call; single beer uses full multi-variant
 - Score-0 look-alikes are not shown as primary links
 - Public Untappd profiles ≠ structured friends/check-in API; Search stays for beer→URL only
 
 ## Suggested next
 
-- Richer series queries (X-Raying *); show providerCalls live per row
-- Optional Agent→Planner webhook reading this file
+- Optional soft-typo expansion in batch path for near-misses like Lupulin
+- Show providerCalls live per row
+- Redeploy Worker when `resolve-core` title cleaning should apply server-side to all clients

@@ -11,8 +11,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tappd In">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.6.1">
-<link rel="icon" href="icons/favicon-32.png?v=0.6.1" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.6.2">
+<link rel="icon" href="icons/favicon-32.png?v=0.6.2" sizes="32x32">
 
 <link rel="stylesheet" href="style.css">
 </head>
@@ -31,7 +31,7 @@
       aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">⚙</button>
   </div>
   <div id="whats-new" class="whats-new collapsible" hidden></div>
-  <p class="tagline">Build a list → find exact Untappd links</p>
+  <p class="tagline">Queue beers, then find exact Untappd links</p>
 </header>
 
 <main>
@@ -55,7 +55,7 @@
   </section>
 
   <section class="card entry-card">
-    <h2 class="section-title">Add beers</h2>
+    <h2 class="section-title">Queue beers</h2>
 
     <div id="brewery-chip-row" class="brewery-chip-row" hidden>
       <button type="button" id="brewery-chip" class="brewery-chip" aria-label="Change brewery"></button>
@@ -75,11 +75,15 @@
     <div class="field" id="beer-entry-wrap">
       <label for="beer-field">Beer</label>
       <input type="text" id="beer-field" autocomplete="off"
-        placeholder="Type a beer, press Enter to add" enterkeyhint="done">
+        placeholder="Beer name, then Enter" enterkeyhint="done">
     </div>
-    <p class="hint">Enter adds to your list — nothing is searched yet.</p>
-    <div class="row-actions">
-      <button type="button" id="add-beer-btn" class="secondary-outline-btn">Add to list</button>
+    <p class="hint entry-flow-hint">
+      <span class="flow-step">1</span> Add to your list
+      <span class="flow-sep">→</span>
+      <span class="flow-step">2</span> Tap Find links (uses search credits)
+    </p>
+    <div class="row-actions entry-actions">
+      <button type="button" id="add-beer-btn" class="secondary-outline-btn">Add</button>
       <button type="button" id="find-links-btn" class="primary-btn" disabled>Find links</button>
     </div>
     <p id="entry-status" class="hint" aria-live="polite"></p>

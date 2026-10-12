@@ -28,16 +28,39 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.6.1-beta with chip + find UI', () => {
+test('boots as v0.6.2-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.6.1-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.6.2-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-recent'));
   assert.equal(d.getElementById('brewery-suggestions'), null);
   assert.ok(d.getElementById('find-links-btn'));
   assert.ok(d.getElementById('find-stats'));
   assert.equal(d.getElementById('camera-btn'), null);
+  assert.match(d.querySelector('.entry-flow-hint')?.textContent || '', /Find links/);
+});
+
+test('cleans Photos chrome and prefers beer display names', () => {
+  const { w } = boot();
+  assert.equal(
+    w.TappdIn.cleanUntappdTitle('X-Raying Rakau - North Park Beer Co | Photos'),
+    'X-Raying Rakau - North Park Beer Co'
+  );
+  assert.equal(
+    w.TappdIn.parseTitleParts('X-Raying Rakau - North Park Beer Co | Photos').brewery,
+    'North Park Beer Co'
+  );
+  assert.equal(
+    w.TappdIn.displayBeerName({
+      title: 'X-Raying Rakau - North Park Beer Co | Photos',
+      beer: 'x-raying',
+    }),
+    'X-Raying Rakau'
+  );
+  assert.equal(w.TappdIn.rowKind({ status: 'done', url: 'https://x', confident: true }), 'linked');
+  assert.equal(w.TappdIn.rowKind({ status: 'done', candidates: [{ url: 'https://x' }] }), 'pick');
+  assert.equal(w.TappdIn.rowKind({ status: 'done' }), 'miss');
 });
 
 test('shows labeled Recent brewery chips from history without autofocus', () => {

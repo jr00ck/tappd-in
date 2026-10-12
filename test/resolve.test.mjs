@@ -7,8 +7,31 @@ import {
   buildQueryVariants,
   flattenProviderResults,
   isConfident,
+  cleanUntappdTitle,
+  parseTitleParts,
 } from '../proxy/resolve-core.js';
 
+test('cleanUntappdTitle strips Photos chrome before beer/brewery split', () => {
+  assert.equal(
+    cleanUntappdTitle('X-Raying Rakau - North Park Beer Co | Photos'),
+    'X-Raying Rakau - North Park Beer Co'
+  );
+  const parts = parseTitleParts('Lupulin - North Park Beer Co | Photos');
+  assert.equal(parts.beer, 'Lupulin');
+  assert.equal(parts.brewery, 'North Park Beer Co');
+});
+
+test('buildResolveResponse prefers cleaned titles without | Photos', () => {
+  const body = buildResolveResponse('North Park', 'X-Raying Rakau', [
+    {
+      title: 'X-Raying Rakau - North Park Beer Co | Photos',
+      url: 'https://untappd.com/b/north-park-beer-co-x-raying-rakau/6899298/photos',
+      snippet: '',
+    },
+  ]);
+  assert.equal(body.best?.title, 'X-Raying Rakau - North Park Beer Co');
+  assert.ok(!/Photos/i.test(body.best?.title || ''));
+});
 
 test('parseUntappdBeerUrl accepts /photos, www, query; ignores checkin/venue', () => {
   assert.equal(

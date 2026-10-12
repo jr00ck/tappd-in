@@ -395,14 +395,47 @@ textarea:focus {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
+  gap: 8px;
+  margin-top: 10px;
 }
 
-.row-actions .secondary-outline-btn {
+.row-actions .secondary-outline-btn,
+.row-actions .primary-btn {
   width: auto;
-  flex: 1;
-  min-width: 140px;
+  flex: 0 1 auto;
   margin-top: 0;
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+.entry-actions .primary-btn {
+  flex: 1 1 auto;
+}
+
+.entry-flow-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 10px;
+}
+
+.flow-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  background: rgba(232, 168, 56, 0.18);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.flow-sep {
+  color: var(--text-dim);
+  opacity: 0.7;
 }
 
 .app-footer {
@@ -561,24 +594,54 @@ textarea:focus {
   margin-top: 10px;
 }
 
-.match-row {
+.beer-row-actions {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-}
-
-.match-row .beer-link {
-  flex: 1;
-  min-width: 0;
-  line-height: 1.3;
-  min-height: 0;
-  padding: 8px 0;
-}
-
-.match-row-actions {
   flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
   margin-top: 6px;
+}
+
+.beer-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  color: var(--ok);
+  font-weight: 700;
+  font-size: 0.95rem;
+  text-decoration: none;
+  min-height: 40px;
+}
+
+.beer-open::before {
+  content: "↗";
+  font-weight: 700;
+}
+
+.beer-open:hover {
+  text-decoration: underline;
+}
+
+.row-status {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.row-status-pending {
+  font-style: italic;
+}
+
+.row-status-pick {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.row-status-miss {
+  color: var(--danger);
+  font-weight: 600;
 }
 
 .fix-inline {
@@ -593,7 +656,7 @@ textarea:focus {
   text-underline-offset: 2px;
   cursor: pointer;
   padding: 8px 4px;
-  min-height: 44px;
+  min-height: 40px;
 }
 
 .fix-panel {
@@ -704,10 +767,56 @@ textarea:focus {
   margin: 0;
 }
 
-.beer-row-meta {
-  display: inline-flex;
+.beer-row-heading {
+  display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.beer-row-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.status-pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-dim);
+}
+
+.beer-row--linked {
+  border-left: 3px solid var(--ok);
+  padding-left: 10px;
+}
+
+.beer-row--linked .status-pip { background: var(--ok); }
+
+.beer-row--pick {
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+}
+
+.beer-row--pick .status-pip { background: var(--accent); }
+
+.beer-row--miss {
+  border-left: 3px solid var(--danger);
+  padding-left: 10px;
+}
+
+.beer-row--miss .status-pip { background: var(--danger); }
+
+.beer-row--pending {
+  border-left: 3px solid rgba(168, 152, 128, 0.45);
+  padding-left: 10px;
+}
+
+.beer-row--loading .status-pip {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(232, 168, 56, 0.2);
 }
 
 .source-badge {
@@ -719,6 +828,7 @@ textarea:focus {
   border-radius: 999px;
   border: 1px solid var(--card-border);
   color: var(--text-dim);
+  flex-shrink: 0;
 }
 
 .source-badge-saved {
@@ -732,14 +842,7 @@ textarea:focus {
 }
 
 .beer-row-pending {
-  position: relative;
   touch-action: pan-y;
-}
-
-.pending-actions {
-  position: absolute;
-  top: 8px;
-  right: 4px;
 }
 
 .remove-beer {
@@ -752,6 +855,7 @@ textarea:focus {
   font-size: 1.25rem;
   line-height: 1;
   cursor: pointer;
+  margin-top: 4px;
 }
 
 .retry-btn {
@@ -822,29 +926,17 @@ textarea:focus {
 
 .beer-row {
   border-top: 1px solid var(--card-border);
-  padding: 12px 4px 4px;
+  padding: 12px 4px 8px;
 }
 
 .beer-row-top {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 6px;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 4px;
 }
-
-.beer-link {
-  display: inline-block;
-  color: var(--accent);
-  font-weight: 600;
-  font-size: 1.05rem;
-  min-height: 44px;
-  line-height: 44px;
-  text-decoration: none;
-}
-
-.beer-link:hover { text-decoration: underline; }
 
 .had-toggle {
   font-size: 0.8rem;
@@ -852,7 +944,9 @@ textarea:focus {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 44px;
+  min-height: 32px;
+  flex-shrink: 0;
+  padding-top: 2px;
 }
 
 .cand-list {
