@@ -11,8 +11,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tappd In">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="icon" href="icons/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.6.1">
+<link rel="icon" href="icons/favicon-32.png?v=0.6.1" sizes="32x32">
 
 <link rel="stylesheet" href="style.css">
 </head>
@@ -64,9 +64,12 @@
 
     <div class="field brewery-field-wrap" id="brewery-field-wrap">
       <label for="brewery-field">Brewery</label>
-      <input type="text" id="brewery-field" list="brewery-suggestions"
+      <input type="text" id="brewery-field"
         autocomplete="off" placeholder="e.g. Finback" enterkeyhint="next">
-      <datalist id="brewery-suggestions"></datalist>
+      <div id="brewery-recent" class="brewery-recent" hidden>
+        <span class="brewery-recent-label">Recent</span>
+        <div id="brewery-recent-chips" class="brewery-recent-chips"></div>
+      </div>
     </div>
 
     <div class="field" id="beer-entry-wrap">

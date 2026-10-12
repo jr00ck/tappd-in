@@ -1,4 +1,4 @@
-const CACHE = 'tappd-in-v0.6.0-beta';
+const CACHE = 'tappd-in-v0.6.1-beta';
 const ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
+  './icons/favicon-32.png',
 ];
 
 self.addEventListener('install', (event) => {

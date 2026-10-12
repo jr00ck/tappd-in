@@ -1,6 +1,7 @@
 .DS_Store
 .claude/settings.local.json
 node_modules/
+icons/src/
 proxy/.deploy-args.json
 proxy/.deploy-code.js
 

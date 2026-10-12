@@ -28,14 +28,36 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.6.0-beta with chip + find UI', () => {
+test('boots as v0.6.1-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.6.0-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.6.1-beta');
   assert.ok(d.getElementById('brewery-chip'));
+  assert.ok(d.getElementById('brewery-recent'));
+  assert.equal(d.getElementById('brewery-suggestions'), null);
   assert.ok(d.getElementById('find-links-btn'));
   assert.ok(d.getElementById('find-stats'));
   assert.equal(d.getElementById('camera-btn'), null);
+});
+
+test('shows labeled Recent brewery chips from history without autofocus', () => {
+  const { d, w } = boot((dom) => {
+    dom.window.localStorage.setItem('tappd-in.breweryHistory', JSON.stringify([
+      { name: 'Finback', count: 3, lastUsed: 2 },
+      { name: 'North Park', count: 1, lastUsed: 1 },
+    ]));
+  });
+  const recent = d.getElementById('brewery-recent');
+  assert.equal(recent.hidden, false);
+  assert.match(recent.textContent, /Recent/);
+  assert.match(recent.textContent, /Finback/);
+  assert.match(recent.textContent, /North Park/);
+  assert.notEqual(d.activeElement, d.getElementById('brewery-field'));
+  d.querySelector('[data-brewery="Finback"]').click();
+  assert.equal(d.getElementById('brewery-chip').textContent, 'Finback');
+  assert.equal(recent.hidden, true);
+  assert.equal(d.activeElement, d.getElementById('beer-field'));
+  void w;
 });
 
 test('parseUntappdBeerUrl normalizes www, query, slash', () => {

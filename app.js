@@ -6,15 +6,15 @@ const CACHE_KEY = 'tappd-in.resolveCache';
 const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 
-const APP_VERSION = '0.6.0-beta';
+const APP_VERSION = '0.6.1-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
+  'Cartoon beer-plush app icon (replaces auto-generated pint)',
+  'Recent breweries are labeled chips — no surprise browser dropdown',
   'No-match recovery: pick candidates or numbered variants; Retry one beer',
-  'Faster entry: brewery chip, swipe-to-remove pending beers',
-  'Status badges: saved vs searched + provider-call summary',
   'List → Find links (batched Search) with Untappd app open on phones',
 ];
 
@@ -521,8 +521,9 @@ const breweryField = document.getElementById('brewery-field');
 const breweryFieldWrap = document.getElementById('brewery-field-wrap');
 const breweryChipRow = document.getElementById('brewery-chip-row');
 const breweryChip = document.getElementById('brewery-chip');
+const breweryRecent = document.getElementById('brewery-recent');
+const breweryRecentChips = document.getElementById('brewery-recent-chips');
 const beerField = document.getElementById('beer-field');
-const brewerySuggestions = document.getElementById('brewery-suggestions');
 const addBeerBtn = document.getElementById('add-beer-btn');
 const findLinksBtn = document.getElementById('find-links-btn');
 const newBrewerBtn = document.getElementById('new-brewer-btn');
@@ -547,12 +548,31 @@ function setHint(el, msg, kind) {
 }
 
 function refreshBrewerySuggestions() {
+  if (!breweryRecent || !breweryRecentChips) return;
   const hist = loadBreweryHistory()
     .slice()
-    .sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || (b.count || 0) - (a.count || 0));
-  brewerySuggestions.innerHTML = hist
-    .map((h) => `<option value="${escapeHtml(h.name)}"></option>`)
+    .sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || (b.count || 0) - (a.count || 0))
+    .slice(0, 6);
+  if (!hist.length || activeBrewery) {
+    breweryRecent.hidden = true;
+    breweryRecentChips.innerHTML = '';
+    return;
+  }
+  breweryRecentChips.innerHTML = hist
+    .map((h) => (
+      `<button type="button" class="brewery-recent-chip" data-brewery="${escapeHtml(h.name)}">${escapeHtml(h.name)}</button>`
+    ))
     .join('');
+  breweryRecent.hidden = false;
+}
+
+function pickRecentBrewery(name) {
+  const brewery = String(name || '').trim();
+  if (!brewery) return;
+  breweryField.value = brewery;
+  activeBrewery = brewery;
+  syncBreweryChip();
+  beerField.focus();
 }
 
 function syncBreweryChip() {
@@ -566,6 +586,7 @@ function syncBreweryChip() {
     breweryChipRow.hidden = true;
     breweryFieldWrap.hidden = false;
   }
+  refreshBrewerySuggestions();
 }
 
 function ensureGroup(brewery) {
@@ -742,7 +763,6 @@ function addBeerToList(brewery, beer) {
 
   activeBrewery = bName;
   touchBreweryHistory(bName);
-  refreshBrewerySuggestions();
   const group = ensureGroup(bName);
   const dup = group.beers.find(
     (r) => normalizeMatchText(r.beer) === normalizeMatchText(beerName) && (r.status || 'pending') === 'pending'
@@ -1176,11 +1196,17 @@ updatedBadge.addEventListener('click', () => {
 });
 
 openInAppInput.checked = loadSettings().openInApp !== false;
-refreshBrewerySuggestions();
 syncBreweryChip();
 renderSession();
-if (!activeBrewery) breweryField.focus();
-else beerField.focus();
+// Don't autofocus brewery on open — mobile browsers used to pop a native
+// suggestion list over the first paint. Focus beer only when a brewery is set.
+if (activeBrewery) beerField.focus();
+
+breweryRecentChips?.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-brewery]');
+  if (!btn) return;
+  pickRecentBrewery(btn.getAttribute('data-brewery'));
+});
 
 // --- Service worker: offline caching only. Updates apply via pull-to-refresh. ---
 if ('serviceWorker' in navigator) {
@@ -1259,6 +1285,10 @@ async function triggerPullRefresh() {
       fetch('app.js', { cache: 'reload' }),
       fetch('style.css', { cache: 'reload' }),
       fetch('sw.js', { cache: 'reload' }),
+      fetch('icons/icon-192.png', { cache: 'reload' }),
+      fetch('icons/icon-512.png', { cache: 'reload' }),
+      fetch('icons/apple-touch-icon.png', { cache: 'reload' }),
+      fetch('icons/favicon-32.png', { cache: 'reload' }),
     ]);
     if ('serviceWorker' in navigator) {
       const reg = await navigator.serviceWorker.getRegistration();

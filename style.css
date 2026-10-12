@@ -461,6 +461,47 @@ textarea:focus {
   font-weight: 600;
 }
 
+.brewery-recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.brewery-recent-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted, #8a7a68);
+  flex: 0 0 auto;
+}
+
+.brewery-recent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.brewery-recent-chip {
+  appearance: none;
+  border: 1px solid rgba(26, 20, 16, 0.12);
+  background: rgba(26, 20, 16, 0.04);
+  color: inherit;
+  border-radius: 999px;
+  min-height: 34px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.brewery-recent-chip:active {
+  background: rgba(232, 168, 56, 0.16);
+  border-color: rgba(232, 168, 56, 0.4);
+}
+
 #beer-field {
   min-height: 52px;
   font-size: 1.05rem;
