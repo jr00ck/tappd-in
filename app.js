@@ -6,12 +6,13 @@ const CACHE_KEY = 'tappd-in.resolveCache';
 const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 
-const APP_VERSION = '0.4.2-beta';
+const APP_VERSION = '0.4.3-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
+  'Fix Settings and ✓ Updated panels expanding blank',
   'Pull-to-refresh installs updates (same flow as Gassy); network-first service worker',
   'Resolver hit-rate: multi-query Perplexity + exact beer scoring / URL normalize',
   'Untappd URL resolver via Perplexity Search (Catalog.beer path parked)',
@@ -25,6 +26,43 @@ function versionLabel() {
   const onProd = location.hostname === PRODUCTION_HOST;
   if (!onProd && PREVIEW_BUILD) return `v${APP_VERSION} · ${PREVIEW_BUILD}`;
   return `v${APP_VERSION}`;
+}
+
+function setCollapsibleOpen(panel, open) {
+  if (!panel) return;
+  if (open) {
+    panel.hidden = false;
+    if (prefersReducedMotion()) {
+      panel.classList.add('is-open');
+      return;
+    }
+    // Double-rAF so the 0fr → 1fr transition runs after display flips on.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => panel.classList.add('is-open'));
+    });
+    return;
+  }
+
+  if (prefersReducedMotion() || !panel.classList.contains('is-open') || panel.hidden) {
+    panel.classList.remove('is-open');
+    panel.hidden = true;
+    return;
+  }
+
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    panel.hidden = true;
+    panel.removeEventListener('transitionend', onEnd);
+  };
+  const onEnd = (e) => {
+    if (e.target !== panel) return;
+    finish();
+  };
+  panel.addEventListener('transitionend', onEnd);
+  panel.classList.remove('is-open');
+  setTimeout(finish, 280);
 }
 
 const DEFAULT_RESOLVE_URL =
@@ -507,9 +545,9 @@ function applyManualUrl(gid, bidx, urlInput) {
 // Events
 
 settingsToggle.addEventListener('click', () => {
-  const open = settingsPanel.hidden;
-  settingsPanel.hidden = !open;
-  settingsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  const opening = settingsPanel.hidden || !settingsPanel.classList.contains('is-open');
+  setCollapsibleOpen(settingsPanel, opening);
+  settingsToggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
 });
 
 saveSettingsBtn.addEventListener('click', () => {
@@ -649,7 +687,7 @@ function renderWhatsNew() {
 updatedBadge.addEventListener('click', () => {
   const opening = updatedBadge.getAttribute('aria-expanded') !== 'true';
   if (opening) renderWhatsNew();
-  whatsNew.hidden = !opening;
+  setCollapsibleOpen(whatsNew, opening);
   updatedBadge.setAttribute('aria-expanded', opening ? 'true' : 'false');
 });
 
