@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tappd In — demo</title>
+<style>
+  :root {
+    --bg: #14110e;
+    --text: #f3ebe0;
+    --accent: #e8a838;
+    --muted: #a89880;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% -10%, rgba(232, 168, 56, 0.18), transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    padding: 24px 16px 48px;
+  }
+  main {
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 1.6rem;
+    color: var(--accent);
+  }
+  p {
+    margin: 0 0 16px;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+  video {
+    width: 100%;
+    border-radius: 16px;
+    border: 1px solid rgba(232, 168, 56, 0.25);
+    background: #0c0a08;
+    display: block;
+  }
+  a {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .actions {
+    margin-top: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tappd In demo</h1>
+  <p>Add beers to a list, then Find links once — batched Untappd resolve.</p>
+  <video
+    controls
+    playsinline
+    preload="metadata"
+    src="./tappd-in-demo-v0.5.0-beta.mp4">
+    Your browser can’t play this video.
+    <a href="./tappd-in-demo-v0.5.0-beta.mp4">Download the MP4</a>
+  </video>
+  <div class="actions">
+    <a href="../">Open the app</a>
+    <a href="./tappd-in-demo-v0.5.0-beta.mp4">Download MP4</a>
+  </div>
+</main>
+</body>
+</html>

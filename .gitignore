@@ -7,5 +7,5 @@ proxy/.deploy-code.js
 proxy/.deploy-args.json
 proxy/.deploy-code.js
 .wrangler
+# Keep a small MP4 in-repo for Pages / README embeds; ignore larger WebM masters
 demo/*.webm
-demo/*.mp4

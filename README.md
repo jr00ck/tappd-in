@@ -6,7 +6,19 @@ Photograph a beer can, identify the label, and open the matching beer in **Untap
 
 **Live app:** https://jr00ck.github.io/tappd-in/ *(deploys on version tags)*
 
+## Demo
+
+Watch a short walkthrough (list → Find links → open matches):
+
+https://jr00ck.github.io/tappd-in/demo/
+
+<video src="https://jr00ck.github.io/tappd-in/demo/tappd-in-demo-v0.5.0-beta.mp4" controls playsinline width="390" title="Tappd In demo">
+</video>
+
+If the player doesn’t show in your viewer, open the [demo page](https://jr00ck.github.io/tappd-in/demo/) or [download the MP4](https://jr00ck.github.io/tappd-in/demo/tappd-in-demo-v0.5.0-beta.mp4).
+
 ## Features
+
 
 - **Take a photo or pick an image** of a can/bottle label
 - **On-device OCR** — uses the browser `TextDetector` API when available (mostly Chromium/Android); otherwise [Tesseract.js](https://github.com/naptha/tesseract.js) (WASM). iOS/Android **do not** expose native Vision / ML Kit OCR to PWAs

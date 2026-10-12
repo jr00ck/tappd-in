@@ -24,13 +24,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Publish only the PWA shell — not tests, Worker source, or local tooling.
+      # Publish PWA shell + demo video (playable on Pages / README embeds).
       - name: Stage Pages artifact
         run: |
-          mkdir -p _site
+          mkdir -p _site/demo
           cp index.html style.css app.js sw.js manifest.webmanifest package.json _site/
           cp -R icons _site/icons
-          # Optional docs at site root (harmless if missing)
+          # Demo page + MP4 for public playback (release assets force-download)
+          if ls demo/*.mp4 >/dev/null 2>&1; then
+            cp demo/*.mp4 _site/demo/
+            [ -f demo/index.html ] && cp demo/index.html _site/demo/
+          fi
           [ -f README.md ] && cp README.md _site/ || true
           [ -f CHANGELOG.md ] && cp CHANGELOG.md _site/ || true
 
