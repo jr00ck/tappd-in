@@ -28,13 +28,15 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.4.3-beta with quick-entry UI', () => {
+test('boots as v0.5.0-beta with quick-entry UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.4.3-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.5.0-beta');
   assert.ok(d.getElementById('brewery-field'));
   assert.ok(d.getElementById('beer-field'));
   assert.ok(d.getElementById('new-brewer-btn'));
+  assert.ok(d.getElementById('find-links-btn'));
+  assert.ok(d.getElementById('add-beer-btn'));
   assert.equal(d.getElementById('camera-btn'), null);
 });
 

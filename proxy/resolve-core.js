@@ -21,7 +21,35 @@ export function normalizeMatchText(s) {
 }
 
 export function tokenList(s) {
-  return normalizeMatchText(s).split(' ').filter((w) => w.length > 1);
+  // Keep single letters (e.g. "X" in "X-Raying …") — length>1 filter dropped them.
+  return normalizeMatchText(s).split(' ').filter((w) => w.length > 1 || /^[a-z]$/.test(w));
+}
+
+/** Levenshtein for short OCR/typo soft-matches (e.g. racau → rakau). */
+export function editDistance(a, b) {
+  const s = String(a || '');
+  const t = String(b || '');
+  if (s === t) return 0;
+  const m = s.length;
+  const n = t.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[m][n];
+}
+
+export function tokensSoftMatch(a, b) {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 4) return false;
+  return editDistance(a, b) <= 1;
 }
 
 export function slugToWords(slug) {
@@ -111,22 +139,31 @@ export function scoreCandidate(brewery, beer, parsed, title) {
     || brewTokens.some((t) => slugWords.includes(t) || titleNorm.includes(t));
   if (!brewOk) return 0;
 
-  const beerHits = beerTokens.filter((t) => slugTokenList.includes(t) || titleBeer.split(' ').includes(t)).length;
+  const titleBeerTokens = titleBeer.split(' ').filter(Boolean);
+  const beerHits = beerTokens.filter((t) =>
+    slugTokenList.some((s) => tokensSoftMatch(s, t))
+    || titleBeerTokens.some((s) => tokensSoftMatch(s, t))
+  ).length;
   const beerCoverage = beerHits / beerTokens.length;
 
   // Extra tokens in slug/title-beer beyond brewery+beer (e.g. "double", "nothing")
   const expected = new Set([...brewTokens, ...beerTokens]);
-  const noise = new Set(['ipa', 'dipa', 'neipa', 'ale', 'lager', 'stout', 'sour', 'hazy']);
+  // "beer" appears in Untappd slugs as "…-beer-company-…" filler — not a look-alike token
+  const noise = new Set(['ipa', 'dipa', 'neipa', 'ale', 'lager', 'stout', 'sour', 'hazy', 'beer']);
   const slugExtras = slugTokenList.filter((t) => !expected.has(t) && !noise.has(t) && t.length > 2);
   const titleExtras = titleBeer.split(' ').filter((t) => t && !expected.has(t) && !noise.has(t) && t.length > 2);
 
   let score = beerCoverage * 0.7;
 
   const beerPortion = beerPortionFromSlug(parsed.slug, brewery);
+  const softPortion = beerPortionSoftEqual(beerPortion, beerNorm);
+  const softTitle = beerPortionSoftEqual(titleBeer, beerNorm);
 
   // Exact beer portion of slug / title — "something mosaic" ≠ "double something mosaic"
   if (beerPortion === beerNorm || titleBeer === beerNorm) {
     score += 0.55;
+  } else if (softPortion || softTitle) {
+    score += 0.5; // OCR/typo near-exact (racau ≈ rakau)
   } else if (hasPhrase(titleBeer, beerNorm) && titleExtras.length === 0) {
     score += 0.35;
   }
@@ -135,7 +172,13 @@ export function scoreCandidate(brewery, beer, parsed, title) {
   score -= slugExtras.length * 0.35;
   score -= titleExtras.length * 0.2;
   score -= (1 - beerCoverage) * 0.4;
-  if (beerPortion && beerPortion !== beerNorm && beerNorm && beerPortion.includes(beerNorm)) {
+  if (
+    beerPortion
+    && beerPortion !== beerNorm
+    && !softPortion
+    && beerNorm
+    && beerPortion.includes(beerNorm)
+  ) {
     score -= 0.4; // subset look-alike with prefixes like "double"
   }
 
@@ -146,24 +189,61 @@ export function scoreCandidate(brewery, beer, parsed, title) {
   return Math.max(0, Math.min(score, 1.35));
 }
 
-/** Beer tokens in slug after stripping brewery words + trailing numeric variants. */
+/** Slug filler after brewery name in Untappd paths (…-beer-company-…). */
+const SLUG_FILLER = new Set(['beer', 'brewing', 'brewery', 'brew', 'co', 'company', 'llc', 'inc']);
+
+/** Beer tokens in slug after stripping brewery + filler + trailing numeric variants. */
 export function beerPortionFromSlug(slug, brewery) {
   const brewTokens = new Set(tokenList(brewery));
   let parts = slugToWords(slug).split(' ').filter(Boolean);
-  while (parts.length && brewTokens.has(parts[0])) parts.shift();
+  while (parts.length && (brewTokens.has(parts[0]) || SLUG_FILLER.has(parts[0]))) {
+    parts.shift();
+  }
   while (parts.length && /^\d+$/.test(parts[parts.length - 1])) parts.pop();
   return parts.join(' ');
 }
 
+/** Token-wise soft equality (edit distance ≤1 on tokens length ≥4). */
+export function beerPortionSoftEqual(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const ta = a.split(' ').filter(Boolean);
+  const tb = b.split(' ').filter(Boolean);
+  if (ta.length !== tb.length) return false;
+  return ta.every((tok, i) => tokensSoftMatch(tok, tb[i]));
+}
+
 export function isConfident(best, second, beer, brewery) {
   if (!best || best.score < 0.72) return false;
-  // Exact beer portion of slug (not a look-alike like "double something mosaic")
+  // Exact / soft beer portion of slug (not a look-alike like "double something mosaic")
   if (beer && brewery) {
     const portion = beerPortionFromSlug(best.slug, brewery);
-    if (portion === normalizeMatchText(beer) && best.score >= 0.72) return true;
+    const beerNorm = normalizeMatchText(beer);
+    if ((portion === beerNorm || beerPortionSoftEqual(portion, beerNorm)) && best.score >= 0.72) {
+      return true;
+    }
   }
   if (!second) return true;
   return best.score - second.score >= 0.08 || best.score >= 0.95;
+}
+
+/** One strong query per beer — used when batching up to 5 beers in one Search call. */
+export function buildBatchQuery(brewery, beer) {
+  const b = String(brewery || '').trim();
+  const beerName = String(beer || '').trim();
+  // Unquoted — quoted OCR typos (racau) over-constrain the provider.
+  return `${b} ${beerName} untappd`;
+}
+
+/** Preserve Perplexity multi-query grouping: results[i] ↔ queries[i]. */
+export function groupProviderResults(payload) {
+  const r = payload && payload.results;
+  if (!Array.isArray(r)) return [];
+  if (r.length && Array.isArray(r[0])) return r.map((g) => (Array.isArray(g) ? g : []));
+  if (r.length && r[0] && typeof r[0] === 'object' && Array.isArray(r[0].results)) {
+    return r.map((g) => g.results || []);
+  }
+  return [r];
 }
 
 export function untappdSearchWebUrl(brewery, beer) {
@@ -226,14 +306,16 @@ export function buildResolveResponse(brewery, beer, pages, extras = {}) {
 
   let scored = [...byId.values()].filter((c) => {
     const slug = slugToWords(c.slug);
+    const slugParts = slug.split(' ').filter(Boolean);
     if (brewTokens.length && !brewTokens.some((t) => slug.includes(t) || normalizeMatchText(c.title).includes(t))) {
       return false;
     }
     if (!beerTokens.length) return true;
-    const hits = beerTokens.filter((t) => slug.includes(t)).length;
+    const hits = beerTokens.filter((t) => slugParts.some((s) => tokensSoftMatch(s, t))).length;
     return hits >= 1 && hits / beerTokens.length >= 0.5;
   });
 
+  scored = scored.filter((c) => c.score > 0);
   scored.sort((a, b) => b.score - a.score
     || a.slug.length - b.slug.length); // prefer shorter slug among ties (fewer variant suffixes)
   const best = scored[0] || null;

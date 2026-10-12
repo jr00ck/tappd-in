@@ -31,31 +31,31 @@
       aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">⚙</button>
   </div>
   <div id="whats-new" class="whats-new collapsible" hidden></div>
-  <p class="tagline">Type brewery + beers → open exact Untappd links</p>
+  <p class="tagline">Build a list → find exact Untappd links</p>
 </header>
 
 <main>
   <section id="settings-panel" class="card settings-panel collapsible" hidden>
     <div class="collapse-inner">
       <h2 class="section-title">Settings</h2>
-      <p class="hint">
-        Resolver URL defaults to the built-in Cloudflare Worker. Override only if you deploy your own.
-      </p>
-      <div class="field">
-        <label for="resolve-url">Resolve proxy URL</label>
-        <input type="url" id="resolve-url"
-          placeholder="https://tappd-in-catalog.rerun-cost-xbox.workers.dev/resolve"
-          autocomplete="off" spellcheck="false">
-      </div>
+      <label class="check-row">
+        <input type="checkbox" id="open-in-app" checked>
+        <span>Open beer links in the Untappd app when possible</span>
+      </label>
+      <p class="hint">Uses the Untappd app on your phone for matched beers. Search still uses Untappd’s site when a beer isn’t matched yet.</p>
+      <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save preferences</button>
+      <button type="button" id="clear-cache-btn" class="link-btn">Clear saved links</button>
+      <button type="button" id="clear-session-btn" class="link-btn clear-session">Clear this session</button>
       <p id="settings-status" class="hint" hidden></p>
-      <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save settings</button>
-      <button type="button" id="clear-session-btn" class="link-btn clear-session">Clear session</button>
-      <p class="hint">Clear session removes on-screen groups; keeps URL cache and brewery history.</p>
+      <p class="hint settings-about">
+        Tappd In looks up exact Untappd beer pages from brewery + beer names.
+        Add several beers, then tap Find links once to save search credits.
+      </p>
     </div>
   </section>
 
   <section class="card entry-card">
-    <h2 class="section-title">Quick entry</h2>
+    <h2 class="section-title">Add beers</h2>
 
     <div class="field brewery-field-wrap">
       <label for="brewery-field">Brewery</label>
@@ -67,11 +67,13 @@
     <div class="field" id="beer-entry-wrap">
       <label for="beer-field">Beer</label>
       <input type="text" id="beer-field" autocomplete="off"
-        placeholder="Type a beer, press Enter" enterkeyhint="go">
+        placeholder="Type a beer, press Enter to add" enterkeyhint="done">
     </div>
-    <p class="hint">Enter adds the beer and resolves it. Keep typing for the same brewery.</p>
+    <p class="hint">Enter adds to your list — nothing is searched yet.</p>
     <div class="row-actions">
-      <button type="button" id="new-brewer-btn" class="secondary-outline-btn">New brewer</button>
+      <button type="button" id="add-beer-btn" class="secondary-outline-btn">Add to list</button>
+      <button type="button" id="find-links-btn" class="primary-btn" disabled>Find links</button>
+      <button type="button" id="new-brewer-btn" class="link-btn">New brewery</button>
     </div>
     <p id="entry-status" class="hint" aria-live="polite"></p>
   </section>

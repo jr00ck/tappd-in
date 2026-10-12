@@ -9,6 +9,7 @@ import {
   isConfident,
 } from '../proxy/resolve-core.js';
 
+
 test('parseUntappdBeerUrl accepts /photos, www, query; ignores checkin/venue', () => {
   assert.equal(
     parseUntappdBeerUrl(
@@ -120,4 +121,25 @@ test('Mortalis Strange Philosophies fixture resolves confidently', () => {
   assert.match(body.best.slug, /strange-philosophies/);
   assert.equal(body.confident, true);
   assert.ok(isConfident(body.best, body.candidates[1], 'Strange Philosophies', 'Mortalis'));
+});
+
+test('North Park X-Raying Rakau / racau typo beats Nelson look-alike', () => {
+  const pages = [
+    {
+      title: 'X-Raying Nelson - North Park Beer Company',
+      url: 'https://untappd.com/b/north-park-beer-company-x-raying-nelson/5559529',
+      snippet: '',
+    },
+    {
+      title: 'X-Raying Rakau - North Park Beer Company',
+      url: 'https://untappd.com/b/north-park-beer-company-x-raying-rakau/6899298',
+      snippet: '',
+    },
+  ];
+  const exact = buildResolveResponse('North Park', 'X-Raying Rakau', pages);
+  assert.equal(exact.best.id, '6899298');
+  assert.equal(exact.confident, true);
+  const typo = buildResolveResponse('North Park', 'x-raying racau', pages);
+  assert.equal(typo.best.id, '6899298');
+  assert.equal(typo.confident, true);
 });

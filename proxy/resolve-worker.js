@@ -1,8 +1,9 @@
 /**
  * Cloudflare Worker — Untappd URL resolver for Tappd In (Perplexity Search).
  *
- * GET /resolve?brewery=Finback&beer=Something+Mosaic
- * GET /resolve?...&debug=1  → include considered URLs + scores
+ * GET  /resolve?brewery=…&beer=…[&debug=1]
+ * POST /resolve-batch  { items: [{ brewery, beer }], debug? }
+ *   → up to 5 beers per Search call (1 billed request), then web pass for misses
  *
  * Secrets: PERPLEXITY_API_KEY
  * Soft limit: SEARCH_LIMITER (30/min/IP)
@@ -12,12 +13,16 @@
  */
 
 import {
+  buildBatchQuery,
   buildQueryVariants,
   buildResolveResponse,
   flattenProviderResults,
+  groupProviderResults,
 } from './resolve-core.js';
 
 const PERPLEXITY_SEARCH = 'https://api.perplexity.ai/search';
+const BATCH_MAX = 20;
+const CHUNK = 5;
 
 function corsHeaders(origin, allowedOrigin) {
   const defaults = [
@@ -36,7 +41,7 @@ function corsHeaders(origin, allowedOrigin) {
 
   return {
     'Access-Control-Allow-Origin': allow,
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Accept, Content-Type',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
@@ -54,6 +59,14 @@ function clientKey(request) {
   return request.headers.get('CF-Connecting-IP')
     || request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
     || 'unknown';
+}
+
+function mapPages(rows) {
+  return (rows || []).map((r) => ({
+    title: String(r.title || ''),
+    url: String(r.url || ''),
+    snippet: String(r.snippet || ''),
+  }));
 }
 
 /**
@@ -82,13 +95,17 @@ async function perplexitySearch(apiKey, { queries, searchType, maxResults }) {
     err.detail = detail.slice(0, 400);
     throw err;
   }
-  const payload = await res.json();
-  const flat = flattenProviderResults(payload);
-  return flat.map((r) => ({
-    title: String(r.title || ''),
-    url: String(r.url || ''),
-    snippet: String(r.snippet || ''),
-  }));
+  return res.json();
+}
+
+async function perplexityPages(apiKey, opts) {
+  const payload = await perplexitySearch(apiKey, opts);
+  return mapPages(flattenProviderResults(payload));
+}
+
+async function perplexityGrouped(apiKey, opts) {
+  const payload = await perplexitySearch(apiKey, opts);
+  return groupProviderResults(payload).map(mapPages);
 }
 
 async function resolveWithPasses(apiKey, brewery, beer, debug) {
@@ -96,10 +113,8 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
   let providerCalls = 0;
   let pass = 'fast_multi';
 
-  // Pass 1: multi-query, search_type fast (cheaper / lower latency).
-  // max_results is a TOTAL budget split across queries — use API max (20).
   providerCalls += 1;
-  let pages = await perplexitySearch(apiKey, {
+  let pages = await perplexityPages(apiKey, {
     queries,
     searchType: 'fast',
     maxResults: 20,
@@ -111,11 +126,10 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
     debug,
   });
 
-  // Pass 2: only if needed — multi-query with search_type web; merge with pass 1
   if (!body.confident) {
     pass = 'web_multi';
     providerCalls += 1;
-    const more = await perplexitySearch(apiKey, {
+    const more = await perplexityPages(apiKey, {
       queries,
       searchType: 'web',
       maxResults: 20,
@@ -134,6 +148,83 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
   return body;
 }
 
+/**
+ * Batch: 1 query per beer, ≤5 beers per billed Search call.
+ * Unconfident items get a second web chunk pass (still batched).
+ * Still-unconfident fall back to full multi-variant resolve (≤2 calls each).
+ */
+async function resolveBatch(apiKey, items, debug) {
+  // Single beer: full multi-variant path (best hit-rate). Batching shines at 2+.
+  if (items.length === 1) {
+    const body = await resolveWithPasses(apiKey, items[0].brewery, items[0].beer, debug);
+    return {
+      results: [{ brewery: items[0].brewery, beer: items[0].beer, ...body }],
+      providerCalls: body.providerCalls || 0,
+      pass: 'single',
+    };
+  }
+
+  let providerCalls = 0;
+  const results = items.map((item) => ({
+    brewery: item.brewery,
+    beer: item.beer,
+    body: null,
+    pages: [],
+  }));
+
+  async function runChunked(indices, searchType) {
+    for (let i = 0; i < indices.length; i += CHUNK) {
+      const slice = indices.slice(i, i + CHUNK);
+      const queries = slice.map((idx) => buildBatchQuery(items[idx].brewery, items[idx].beer));
+      providerCalls += 1;
+      // Merge all hits from the multi-query call; per-beer scoring + brewery
+      // filters keep matches separated (more reliable than depending on group shape).
+      const pages = await perplexityPages(apiKey, {
+        queries,
+        searchType,
+        maxResults: 20,
+      });
+      slice.forEach((idx) => {
+        results[idx].pages = [...results[idx].pages, ...pages];
+        results[idx].body = buildResolveResponse(items[idx].brewery, items[idx].beer, results[idx].pages, {
+          pass: searchType === 'fast' ? 'batch_fast' : 'batch_web',
+          providerCalls,
+          queries,
+          debug,
+        });
+      });
+    }
+  }
+
+  const allIdx = items.map((_, i) => i);
+  await runChunked(allIdx, 'fast');
+
+  const needWeb = results
+    .map((r, i) => (r.body && !r.body.confident ? i : -1))
+    .filter((i) => i >= 0);
+  if (needWeb.length) {
+    await runChunked(needWeb, 'web');
+  }
+
+  // No per-beer multi-variant fallback here — that would defeat batching.
+  // Unconfident rows surface candidates + Untappd search in the PWA.
+
+  return {
+    results: results.map((r) => {
+      const body = r.body || { confident: false, best: null, candidates: [] };
+      body.providerCalls = providerCalls;
+      body.pass = body.pass || 'batch';
+      return {
+        brewery: r.brewery,
+        beer: r.beer,
+        ...body,
+      };
+    }),
+    providerCalls,
+    pass: 'batch',
+  };
+}
+
 export default {
   async fetch(request, env) {
     const headers = corsHeaders(
@@ -144,23 +235,17 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers });
     }
-    if (request.method !== 'GET') {
-      return json({ error: 'GET only' }, 405, headers);
-    }
 
     const url = new URL(request.url);
-    if (url.pathname !== '/' && !url.pathname.endsWith('/resolve')) {
+    const path = url.pathname.replace(/\/$/, '') || '/';
+    const isResolve = path === '/' || path.endsWith('/resolve');
+    const isBatch = path.endsWith('/resolve-batch');
+
+    if (!isResolve && !isBatch) {
       return json({
         error: 'Not found',
-        hint: 'GET /resolve?brewery=…&beer=…[&debug=1]',
+        hint: 'GET /resolve?brewery=…&beer=… or POST /resolve-batch',
       }, 404, headers);
-    }
-
-    const brewery = (url.searchParams.get('brewery') || '').trim();
-    const beer = (url.searchParams.get('beer') || '').trim();
-    const debug = url.searchParams.get('debug') === '1';
-    if (!brewery || !beer) {
-      return json({ error: 'Missing brewery or beer' }, 400, headers);
     }
 
     if (env.SEARCH_LIMITER) {
@@ -179,6 +264,38 @@ export default {
     }
 
     try {
+      if (isBatch) {
+        if (request.method !== 'POST') {
+          return json({ error: 'POST only', hint: 'POST /resolve-batch with JSON body' }, 405, headers);
+        }
+        const payload = await request.json().catch(() => null);
+        const rawItems = Array.isArray(payload?.items) ? payload.items : [];
+        const items = rawItems
+          .map((it) => ({
+            brewery: String(it?.brewery || '').trim(),
+            beer: String(it?.beer || '').trim(),
+          }))
+          .filter((it) => it.brewery && it.beer)
+          .slice(0, BATCH_MAX);
+        if (!items.length) {
+          return json({ error: 'Missing items', hint: '{ "items": [{ "brewery", "beer" }] }' }, 400, headers);
+        }
+        const debug = !!payload?.debug;
+        const body = await resolveBatch(apiKey, items, debug);
+        return json(body, 200, headers);
+      }
+
+      if (request.method !== 'GET') {
+        return json({ error: 'GET only for /resolve' }, 405, headers);
+      }
+
+      const brewery = (url.searchParams.get('brewery') || '').trim();
+      const beer = (url.searchParams.get('beer') || '').trim();
+      const debug = url.searchParams.get('debug') === '1';
+      if (!brewery || !beer) {
+        return json({ error: 'Missing brewery or beer' }, 400, headers);
+      }
+
       const body = await resolveWithPasses(apiKey, brewery, beer, debug);
       return json(body, 200, headers);
     } catch (err) {
