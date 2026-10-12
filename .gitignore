@@ -7,3 +7,5 @@ proxy/.deploy-code.js
 proxy/.deploy-args.json
 proxy/.deploy-code.js
 .wrangler
+demo/*.webm
+demo/*.mp4
