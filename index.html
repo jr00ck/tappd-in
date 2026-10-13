@@ -11,8 +11,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tappd In">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.6.2">
-<link rel="icon" href="icons/favicon-32.png?v=0.6.2" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.7.0">
+<link rel="icon" href="icons/favicon-32.png?v=0.7.0" sizes="32x32">
 
 <link rel="stylesheet" href="style.css">
 </head>
@@ -44,17 +44,53 @@
       </label>
       <p class="hint">Uses the Untappd app on your phone for matched beers. Search still uses Untappd’s site when a beer isn’t matched yet.</p>
       <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save preferences</button>
+      <div class="import-block">
+        <h3 class="subsection-title">Your Untappd export</h3>
+        <p class="hint">Import <code>untappd-checkins.csv</code> (and optionally <code>untappd-account.json</code>) to mark beers you’ve had, show your rating, and skip Search when a beer ID is already known.</p>
+        <button type="button" id="import-export-btn" class="secondary-outline-btn">Import check-ins / account</button>
+        <input type="file" id="import-export-input" accept=".csv,.json,text/csv,application/json" multiple hidden>
+        <p id="library-status" class="hint" hidden></p>
+      </div>
       <button type="button" id="clear-cache-btn" class="link-btn">Clear saved links</button>
       <button type="button" id="clear-session-btn" class="link-btn clear-session">Clear this session</button>
       <p id="settings-status" class="hint" hidden></p>
       <p class="hint settings-about">
-        Tappd In looks up exact Untappd beer pages from brewery + beer names.
-        Add several beers, then tap Find links once to save search credits.
+        Queue beers under a brewery, then Find links once. Tap a beer to edit, retry, or paste a link.
       </p>
     </div>
   </section>
 
-  <section class="card entry-card">
+  <section id="beer-detail" class="card beer-detail" hidden>
+    <div class="edit-banner">
+      <span id="detail-banner-text">Beer details</span>
+      <button type="button" id="detail-done-btn" class="link-btn">Done</button>
+    </div>
+    <div class="field">
+      <label for="detail-beer">Beer</label>
+      <input type="text" id="detail-beer" autocomplete="off">
+    </div>
+    <p id="detail-brewery" class="hint detail-brewery"></p>
+    <p id="detail-had-line" class="hint" hidden></p>
+    <p id="detail-status-line" class="hint"></p>
+    <div id="detail-candidates" class="detail-candidates" hidden></div>
+    <div class="field" id="detail-fix-wrap" hidden>
+      <label for="detail-fix-url">Paste Untappd beer link</label>
+      <div class="fix-row">
+        <input type="url" id="detail-fix-url" placeholder="https://untappd.com/b/… or /beer/123" autocomplete="off">
+        <button type="button" id="detail-fix-save" class="secondary-outline-btn">Save</button>
+      </div>
+    </div>
+    <div class="detail-actions">
+      <a id="detail-open" class="beer-open" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in Untappd</a>
+      <a id="detail-search" class="untappd-search-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
+      <button type="button" id="detail-retry-btn" class="secondary-outline-btn">Retry lookup</button>
+      <button type="button" id="detail-fix-btn" class="link-btn">Paste link</button>
+      <button type="button" id="detail-remove-btn" class="link-btn detail-remove">Remove from list</button>
+    </div>
+    <p id="detail-status" class="hint" aria-live="polite" hidden></p>
+  </section>
+
+  <section class="card entry-card" id="entry-card">
     <h2 class="section-title">Queue beers</h2>
 
     <div id="brewery-chip-row" class="brewery-chip-row" hidden>

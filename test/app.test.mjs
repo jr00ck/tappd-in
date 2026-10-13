@@ -28,17 +28,50 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.6.2-beta with chip + find UI', () => {
+test('boots as v0.7.0-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.6.2-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.7.0-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-recent'));
   assert.equal(d.getElementById('brewery-suggestions'), null);
   assert.ok(d.getElementById('find-links-btn'));
-  assert.ok(d.getElementById('find-stats'));
+  assert.ok(d.getElementById('beer-detail'));
+  assert.ok(d.getElementById('import-export-btn'));
   assert.equal(d.getElementById('camera-btn'), null);
   assert.match(d.querySelector('.entry-flow-hint')?.textContent || '', /Find links/);
+});
+
+test('shortBreweryName + history migrate collapses North Park dupes', () => {
+  const { w } = boot((dom) => {
+    dom.window.localStorage.setItem('tappd-in.breweryHistory', JSON.stringify([
+      { name: 'North Park Beer Company', count: 2, lastUsed: 2 },
+      { name: 'North park', count: 1, lastUsed: 1 },
+    ]));
+  });
+  assert.equal(w.TappdIn.shortBreweryName('North Park Beer Company'), 'North Park');
+  w.TappdIn.migrateBreweryHistory();
+  const hist = JSON.parse(w.localStorage.getItem('tappd-in.breweryHistory'));
+  assert.equal(hist.length, 1);
+  assert.equal(hist[0].name, 'North Park');
+  assert.equal(hist[0].count, 3);
+});
+
+test('import checkins CSV marks Had and resolves Lupulin from export', () => {
+  const { w } = boot();
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  const r = w.TappdIn.importCheckinsCsv(csv);
+  assert.ok(r.beers >= 5);
+  const hit = w.TappdIn.libraryLookup('North Park', 'Lupulin Collider Batch 6');
+  assert.ok(hit);
+  assert.equal(hit.bid, '6628541');
+  assert.equal(
+    w.TappdIn.parseUntappdBeerUrl('https://untappd.com/beer/6628541').id,
+    '6628541'
+  );
 });
 
 test('cleans Photos chrome and prefers beer display names', () => {
