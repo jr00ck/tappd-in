@@ -53,7 +53,11 @@ npm test
 
 Service workers need HTTPS or `localhost` / `127.0.0.1`.
 
-While iterating, set `PREVIEW_BUILD` in `app.js` (e.g. `'a3'`) so the footer shows `v0.8.0-beta · a3` off Pages. Clear it before tagging.
+While iterating, set `PREVIEW_BUILD` in `app.js` (e.g. `'a3'`) so the footer shows `v0.9.0-beta · a3` off Pages. Clear it before tagging.
+
+## Versioning (pre-1.0)
+
+Stay on `0.x.y-beta` until an explicit **1.0** launch. Do not tag `v1.0.0` (or any `1.x`) until that moment. Increment the beta patch/minor as usual (`0.9.0-beta` → `0.9.1-beta` / `0.10.0-beta`).
 
 ## Releasing
 
@@ -64,6 +68,6 @@ GitHub Pages deploys on a pushed `v*` tag (environment must allow tag `v*`).
 # 2. Update docs/STATUS.md (keep under 60 lines)
 # 3. npm test && npm run changelog   # optional
 # 4. Tag + push
-git tag -a vX.Y.Z -m "vX.Y.Z - short description"
-git push origin main vX.Y.Z
+git tag -a v0.X.Y-beta -m "v0.X.Y-beta - short description"
+git push origin main v0.X.Y-beta
 ```

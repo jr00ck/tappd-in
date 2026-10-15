@@ -11,8 +11,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tappd In">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.8.0">
-<link rel="icon" href="icons/favicon-32.png?v=0.8.0" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.9.0">
+<link rel="icon" href="icons/favicon-32.png?v=0.9.0" sizes="32x32">
 
 <link rel="stylesheet" href="style.css">
 </head>
@@ -35,225 +35,296 @@
 </header>
 
 <main>
-  <section id="settings-panel" class="card settings-panel collapsible" hidden>
-    <div class="collapse-inner">
-      <h2 class="section-title">Settings</h2>
-      <label class="check-row">
-        <input type="checkbox" id="open-in-app" checked>
-        <span>Open beer links in the Untappd app when possible</span>
-      </label>
-      <p class="hint">Uses the Untappd app on your phone for matched beers. Search still uses Untappd’s site when a beer isn’t matched yet.</p>
-      <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save preferences</button>
-      <div class="import-block">
-        <h3 class="subsection-title">Your Untappd export</h3>
-        <p class="hint">The check-ins CSV is every beer you've had, with the date, your rating, and where. The account JSON is wish lists and saved beers, without check-in dates. Both stay on this device. The log is below.</p>
-        <button type="button" id="import-export-btn" class="secondary-outline-btn">Import check-ins / account</button>
-        <input type="file" id="import-export-input" accept=".csv,.json,text/csv,application/json" multiple hidden>
-        <p id="library-status" class="hint" hidden></p>
-      </div>
-      <button type="button" id="clear-cache-btn" class="link-btn">Clear saved links</button>
-      <button type="button" id="clear-session-btn" class="link-btn clear-session">Clear this session</button>
-      <p id="settings-status" class="hint" hidden></p>
-      <p class="hint settings-about">
-        Queue beers under a brewery, then Find links once. Tap a beer to edit, retry, or paste a link.
-      </p>
-    </div>
-  </section>
-
-  <section id="beer-detail" class="card beer-detail" hidden>
-    <div class="edit-banner">
-      <span id="detail-banner-text">Beer details</span>
-      <button type="button" id="detail-done-btn" class="link-btn">Done</button>
-    </div>
-    <div class="field">
-      <label for="detail-beer">Beer</label>
-      <input type="text" id="detail-beer" autocomplete="off">
-    </div>
-    <p id="detail-brewery" class="hint detail-brewery"></p>
-    <p id="detail-had-line" class="hint" hidden></p>
-    <p id="detail-status-line" class="hint"></p>
-    <div id="detail-candidates" class="detail-candidates" hidden></div>
-    <div class="field" id="detail-fix-wrap" hidden>
-      <label for="detail-fix-url">Paste Untappd beer link</label>
-      <div class="fix-row">
-        <input type="url" id="detail-fix-url" placeholder="https://untappd.com/b/… or /beer/123" autocomplete="off">
-        <button type="button" id="detail-fix-save" class="secondary-outline-btn">Save</button>
-      </div>
-    </div>
-    <div class="detail-actions">
-      <a id="detail-open" class="beer-open" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in Untappd</a>
-      <a id="detail-search" class="untappd-search-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
-      <button type="button" id="detail-retry-btn" class="secondary-outline-btn">Retry lookup</button>
-      <button type="button" id="detail-fix-btn" class="link-btn">Paste link</button>
-      <button type="button" id="detail-remove-btn" class="link-btn detail-remove">Remove from list</button>
-    </div>
-    <p id="detail-status" class="hint" aria-live="polite" hidden></p>
-  </section>
-
-  <section class="card entry-card" id="entry-card">
-    <h2 class="section-title">Queue beers</h2>
-
-    <div id="brewery-chip-row" class="brewery-chip-row" hidden>
-      <button type="button" id="brewery-chip" class="brewery-chip" aria-label="Change brewery"></button>
-      <button type="button" id="new-brewer-btn" class="link-btn">+ New brewery</button>
-    </div>
-
-    <div class="field brewery-field-wrap" id="brewery-field-wrap">
-      <label for="brewery-field">Brewery</label>
-      <input type="text" id="brewery-field"
-        autocomplete="off" placeholder="e.g. Finback" enterkeyhint="next">
-      <div id="brewery-recent" class="brewery-recent" hidden>
-        <span class="brewery-recent-label">Recent</span>
-        <div id="brewery-recent-chips" class="brewery-recent-chips"></div>
-      </div>
-    </div>
-
-    <div class="field" id="beer-entry-wrap">
-      <label for="beer-field">Beer</label>
-      <input type="text" id="beer-field" autocomplete="off"
-        placeholder="Beer name, then Enter" enterkeyhint="done">
-    </div>
-    <p class="hint entry-flow-hint">
-      <span class="flow-step">1</span> Add to your list
-      <span class="flow-sep">→</span>
-      <span class="flow-step">2</span> Tap Find links (uses search credits)
-    </p>
-    <div class="row-actions entry-actions">
-      <button type="button" id="add-beer-btn" class="secondary-outline-btn">Add</button>
-      <button type="button" id="find-links-btn" class="primary-btn" disabled>Find links</button>
-    </div>
-    <p id="entry-status" class="hint" aria-live="polite"></p>
-  </section>
-
-  <section id="session-panel" class="card" hidden>
-    <div class="session-header">
-      <h2 class="section-title">This session</h2>
-      <p id="find-stats" class="hint find-stats" hidden></p>
-    </div>
-    <div id="session-groups" class="session-groups"></div>
-  </section>
-
-  <section id="had-panel" class="had-log" hidden aria-label="Beers you've had">
-    <div id="had-meta" class="log-meta">
-      <div class="summary-head">
-        <h2 class="section-title">Had</h2>
-        <p id="had-count" class="summary-count"></p>
-      </div>
-      <div id="had-summary" class="summary-stats" role="list" aria-label="Check-in totals"></div>
-    </div>
-
-    <form id="checkin-editor" class="card checkin-editor" hidden novalidate>
-      <div class="edit-banner">
-        <span id="checkin-banner-text">Check-in</span>
-        <button type="button" id="checkin-done-btn" class="link-btn">Done</button>
-      </div>
-
-      <div class="field">
-        <div class="field-label-row">
-          <label for="checkin-when">Date &amp; time</label>
-          <button type="button" id="checkin-advanced-toggle" class="icon-btn advanced-toggle" title="Advanced"
-            aria-label="Advanced" aria-expanded="false" aria-controls="checkin-advanced">⚙</button>
+  <section id="page-log" class="page" aria-label="Log">
+    <section id="settings-panel" class="card settings-panel collapsible" hidden>
+      <div class="collapse-inner">
+        <h2 class="section-title">Settings</h2>
+        <label class="check-row">
+          <input type="checkbox" id="open-in-app" checked>
+          <span>Open beer links in the Untappd app when possible</span>
+        </label>
+        <p class="hint">Uses the Untappd app on your phone for matched beers. Search still uses Untappd’s site when a beer isn’t matched yet.</p>
+        <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save preferences</button>
+        <div class="import-block">
+          <h3 class="subsection-title">Your Untappd export</h3>
+          <p class="hint">The check-ins CSV is every beer you've had, with the date, your rating, and where. The account JSON is wish lists and saved beers, without check-in dates. Both stay on this device. The log is below.</p>
+          <button type="button" id="import-export-btn" class="secondary-outline-btn">Import check-ins / account</button>
+          <input type="file" id="import-export-input" accept=".csv,.json,text/csv,application/json" multiple hidden>
+          <p id="library-status" class="hint" hidden></p>
         </div>
-        <div id="checkin-advanced" class="advanced-panel collapsible" hidden>
-          <div class="collapse-inner">
-            <div class="field">
-              <label for="checkin-id-field">Check-in ID</label>
-              <input type="text" id="checkin-id-field" readonly>
+        <button type="button" id="clear-cache-btn" class="link-btn">Clear saved links</button>
+        <button type="button" id="clear-session-btn" class="link-btn clear-session">Clear this session</button>
+        <p id="settings-status" class="hint" hidden></p>
+        <p class="hint settings-about">
+          Queue beers under a brewery, then Find links once. Tap a beer to edit, retry, or paste a link.
+        </p>
+      </div>
+    </section>
+
+    <section id="beer-detail" class="card beer-detail" hidden>
+      <div class="edit-banner">
+        <span id="detail-banner-text">Beer details</span>
+        <button type="button" id="detail-done-btn" class="link-btn">Done</button>
+      </div>
+      <div class="field">
+        <label for="detail-beer">Beer</label>
+        <input type="text" id="detail-beer" autocomplete="off">
+      </div>
+      <p id="detail-brewery" class="hint detail-brewery"></p>
+      <p id="detail-had-line" class="hint" hidden></p>
+      <p id="detail-status-line" class="hint"></p>
+      <div id="detail-candidates" class="detail-candidates" hidden></div>
+      <div class="field" id="detail-fix-wrap" hidden>
+        <label for="detail-fix-url">Paste Untappd beer link</label>
+        <div class="fix-row">
+          <input type="url" id="detail-fix-url" placeholder="https://untappd.com/b/… or /beer/123" autocomplete="off">
+          <button type="button" id="detail-fix-save" class="secondary-outline-btn">Save</button>
+        </div>
+      </div>
+      <div class="detail-actions">
+        <a id="detail-open" class="beer-open" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in Untappd</a>
+        <a id="detail-search" class="untappd-search-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
+        <button type="button" id="detail-retry-btn" class="secondary-outline-btn">Retry lookup</button>
+        <button type="button" id="detail-fix-btn" class="link-btn">Paste link</button>
+        <button type="button" id="detail-remove-btn" class="link-btn detail-remove">Remove from list</button>
+      </div>
+      <p id="detail-status" class="hint" aria-live="polite" hidden></p>
+    </section>
+
+    <section class="card entry-card" id="entry-card">
+      <h2 class="section-title">Queue beers</h2>
+
+      <div id="brewery-chip-row" class="brewery-chip-row" hidden>
+        <button type="button" id="brewery-chip" class="brewery-chip" aria-label="Change brewery"></button>
+        <button type="button" id="new-brewer-btn" class="link-btn">+ New brewery</button>
+      </div>
+      <div id="brewery-shelf" class="brewery-shelf" hidden>
+        <button type="button" id="brewery-shelf-toggle" class="brewery-shelf-toggle" aria-expanded="false"
+          aria-controls="brewery-shelf-panel">
+          <span id="brewery-shelf-summary" class="brewery-shelf-summary"></span>
+          <span class="brewery-shelf-chevron" aria-hidden="true">▾</span>
+        </button>
+        <div id="brewery-shelf-panel" class="brewery-shelf-panel" hidden>
+          <ul id="brewery-shelf-list" class="brewery-shelf-list"></ul>
+        </div>
+      </div>
+
+      <div class="field brewery-field-wrap" id="brewery-field-wrap">
+        <label for="brewery-field">Brewery</label>
+        <input type="text" id="brewery-field"
+          autocomplete="off" placeholder="Start typing a brewery" enterkeyhint="next">
+        <div id="brewery-suggest" class="field-suggest" hidden>
+          <div id="brewery-suggest-chips" class="suggest-chips" role="listbox" aria-label="Brewery matches"></div>
+        </div>
+      </div>
+
+      <div class="field" id="beer-entry-wrap">
+        <label for="beer-field">Beer</label>
+        <input type="text" id="beer-field" autocomplete="off"
+          placeholder="Beer name, then Enter" enterkeyhint="done">
+        <p id="beer-match-hint" class="beer-match-hint" hidden></p>
+        <div id="beer-suggest" class="field-suggest" hidden>
+          <div id="beer-suggest-chips" class="suggest-chips" role="listbox" aria-label="Beer matches"></div>
+        </div>
+      </div>
+      <p class="hint entry-flow-hint">
+        <span class="flow-step">1</span> Add to your list
+        <span class="flow-sep">→</span>
+        <span class="flow-step">2</span> Tap Find links (uses search credits)
+      </p>
+      <div class="row-actions entry-actions">
+        <button type="button" id="add-beer-btn" class="secondary-outline-btn">Add</button>
+        <button type="button" id="find-links-btn" class="primary-btn" disabled>Find links</button>
+      </div>
+      <p id="entry-status" class="hint" aria-live="polite"></p>
+    </section>
+
+    <section id="session-panel" class="card" hidden>
+      <div class="session-header">
+        <h2 class="section-title">This session</h2>
+        <p id="find-stats" class="hint find-stats" hidden></p>
+      </div>
+      <div id="session-groups" class="session-groups"></div>
+    </section>
+
+    <section id="had-panel" class="had-log" hidden aria-label="Beers you've had">
+      <div id="had-meta" class="log-meta">
+        <div class="summary-head">
+          <h2 class="section-title">Had</h2>
+          <p id="had-count" class="summary-count"></p>
+        </div>
+        <div id="had-summary" class="summary-stats" role="list" aria-label="Check-in totals"></div>
+      </div>
+
+      <form id="checkin-editor" class="card checkin-editor" hidden novalidate>
+        <div class="edit-banner">
+          <span id="checkin-banner-text">Check-in</span>
+          <button type="button" id="checkin-done-btn" class="link-btn">Done</button>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label for="checkin-when">Date &amp; time</label>
+            <button type="button" id="checkin-advanced-toggle" class="icon-btn advanced-toggle" title="Advanced"
+              aria-label="Advanced" aria-expanded="false" aria-controls="checkin-advanced">⚙</button>
+          </div>
+          <div id="checkin-advanced" class="advanced-panel collapsible" hidden>
+            <div class="collapse-inner">
+              <div class="field">
+                <label for="checkin-id-field">Check-in ID</label>
+                <input type="text" id="checkin-id-field" readonly>
+              </div>
+              <p class="advanced-kicker">Beer</p>
+              <div class="field">
+                <label for="checkin-style">Style</label>
+                <input type="text" id="checkin-style" autocomplete="off">
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="checkin-abv">ABV %</label>
+                  <input type="text" id="checkin-abv" inputmode="decimal" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="checkin-ibu">IBU</label>
+                  <input type="text" id="checkin-ibu" inputmode="numeric" autocomplete="off">
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="checkin-bid">Beer ID</label>
+                  <input type="text" id="checkin-bid" inputmode="numeric" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="checkin-brewery-id">Brewery ID</label>
+                  <input type="text" id="checkin-brewery-id" readonly>
+                </div>
+              </div>
+              <p class="advanced-kicker">Place</p>
+              <div class="field-row">
+                <div class="field">
+                  <label for="checkin-city">City</label>
+                  <input type="text" id="checkin-city" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="checkin-state">State</label>
+                  <input type="text" id="checkin-state" autocomplete="off">
+                </div>
+              </div>
+              <div class="field">
+                <label for="checkin-purchase">Bought at</label>
+                <input type="text" id="checkin-purchase" autocomplete="off">
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="checkin-lat">Latitude</label>
+                  <input type="text" id="checkin-lat" inputmode="decimal" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="checkin-lng">Longitude</label>
+                  <input type="text" id="checkin-lng" inputmode="decimal" autocomplete="off">
+                </div>
+              </div>
+              <div id="checkin-facts" class="checkin-facts"></div>
             </div>
-            <p class="advanced-kicker">Beer</p>
-            <div class="field">
-              <label for="checkin-style">Style</label>
-              <input type="text" id="checkin-style" autocomplete="off">
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="checkin-abv">ABV %</label>
-                <input type="text" id="checkin-abv" inputmode="decimal" autocomplete="off">
-              </div>
-              <div class="field">
-                <label for="checkin-ibu">IBU</label>
-                <input type="text" id="checkin-ibu" inputmode="numeric" autocomplete="off">
-              </div>
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="checkin-bid">Beer ID</label>
-                <input type="text" id="checkin-bid" inputmode="numeric" autocomplete="off">
-              </div>
-              <div class="field">
-                <label for="checkin-brewery-id">Brewery ID</label>
-                <input type="text" id="checkin-brewery-id" readonly>
-              </div>
-            </div>
-            <p class="advanced-kicker">Place</p>
-            <div class="field-row">
-              <div class="field">
-                <label for="checkin-city">City</label>
-                <input type="text" id="checkin-city" autocomplete="off">
-              </div>
-              <div class="field">
-                <label for="checkin-state">State</label>
-                <input type="text" id="checkin-state" autocomplete="off">
-              </div>
-            </div>
-            <div class="field">
-              <label for="checkin-purchase">Bought at</label>
-              <input type="text" id="checkin-purchase" autocomplete="off">
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="checkin-lat">Latitude</label>
-                <input type="text" id="checkin-lat" inputmode="decimal" autocomplete="off">
-              </div>
-              <div class="field">
-                <label for="checkin-lng">Longitude</label>
-                <input type="text" id="checkin-lng" inputmode="decimal" autocomplete="off">
-              </div>
-            </div>
-            <div id="checkin-facts" class="checkin-facts"></div>
+          </div>
+          <input type="datetime-local" id="checkin-when" required>
+        </div>
+
+        <div class="field">
+          <label for="checkin-beer">Beer</label>
+          <input type="text" id="checkin-beer" autocomplete="off" required>
+        </div>
+        <div class="field">
+          <label for="checkin-brewery">Brewery</label>
+          <input type="text" id="checkin-brewery" autocomplete="off" required>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="checkin-rating">Your rating</label>
+            <input type="text" id="checkin-rating" inputmode="decimal" placeholder="4.25" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="checkin-serving">Serving</label>
+            <select id="checkin-serving"></select>
           </div>
         </div>
-        <input type="datetime-local" id="checkin-when" required>
-      </div>
-
-      <div class="field">
-        <label for="checkin-beer">Beer</label>
-        <input type="text" id="checkin-beer" autocomplete="off" required>
-      </div>
-      <div class="field">
-        <label for="checkin-brewery">Brewery</label>
-        <input type="text" id="checkin-brewery" autocomplete="off" required>
-      </div>
-      <div class="field-row">
         <div class="field">
-          <label for="checkin-rating">Your rating</label>
-          <input type="text" id="checkin-rating" inputmode="decimal" placeholder="4.25" autocomplete="off">
+          <label for="checkin-venue">Venue</label>
+          <div class="location-row">
+            <input type="text" id="checkin-venue" autocomplete="off" placeholder="Taproom or place">
+            <button type="button" id="checkin-locate-btn" title="Use current location"
+              aria-label="Use current location">📍</button>
+          </div>
+          <p id="checkin-location-status" class="hint"></p>
+          <div id="checkin-nearby-venues" class="nearby-venues" hidden></div>
         </div>
         <div class="field">
-          <label for="checkin-serving">Serving</label>
-          <select id="checkin-serving"></select>
+          <label for="checkin-note">Note</label>
+          <textarea id="checkin-note" rows="2" placeholder="Optional"></textarea>
         </div>
-      </div>
-      <div class="field">
-        <label for="checkin-venue">Venue</label>
-        <input type="text" id="checkin-venue" autocomplete="off" placeholder="Where you had it">
-      </div>
-      <div class="field">
-        <label for="checkin-note">Note</label>
-        <textarea id="checkin-note" rows="2" placeholder="Optional"></textarea>
-      </div>
-      <button type="submit" class="primary-btn" id="checkin-save-btn">Save</button>
-      <button type="button" id="checkin-delete-btn" class="link-btn checkin-delete">Remove from this device</button>
-      <p class="hint">Saved here only. Untappd itself is unchanged.</p>
-    </form>
+        <button type="submit" class="primary-btn" id="checkin-save-btn">Save</button>
+        <button type="button" id="checkin-delete-btn" class="link-btn checkin-delete">Remove from this device</button>
+        <p class="hint">Saved here only. Untappd itself is unchanged.</p>
+      </form>
 
-    <ul id="had-list" class="entries"></ul>
+      <ul id="had-list" class="entries"></ul>
+    </section>
+
+    <footer class="app-footer">
+      <span class="app-footer-version"><span id="app-version"></span></span>
+    </footer>
   </section>
 
-  <footer class="app-footer">
-    <span class="app-footer-version"><span id="app-version"></span></span>
-  </footer>
+  <section id="page-trends" class="page" hidden aria-label="Trends">
+    <p id="trends-empty" class="hint trends-empty">Import a few check-ins to see trends.</p>
+    <div id="trends-content" class="trends-content" hidden>
+      <article id="chart-checkins" class="trend-chart" hidden aria-labelledby="chart-checkins-heading">
+        <div class="trend-chart-head">
+          <h2 id="chart-checkins-heading">Check-ins</h2>
+          <p id="chart-checkins-avg" class="trend-chart-avg"></p>
+        </div>
+        <div id="chart-checkins-body" class="trend-chart-body" role="img"></div>
+      </article>
+
+      <article id="chart-rating" class="trend-chart" hidden aria-labelledby="chart-rating-heading">
+        <div class="trend-chart-head">
+          <h2 id="chart-rating-heading">Avg rating</h2>
+          <p id="chart-rating-avg" class="trend-chart-avg"></p>
+        </div>
+        <div id="chart-rating-body" class="trend-chart-body" role="img"></div>
+      </article>
+
+      <article id="chart-beers" class="trend-chart" hidden aria-labelledby="chart-beers-heading">
+        <div class="trend-chart-head">
+          <h2 id="chart-beers-heading">Unique beers</h2>
+          <p id="chart-beers-avg" class="trend-chart-avg"></p>
+        </div>
+        <div id="chart-beers-body" class="trend-chart-body" role="img"></div>
+      </article>
+
+      <article id="chart-breweries" class="trend-chart" hidden aria-labelledby="chart-breweries-heading">
+        <div class="trend-chart-head">
+          <h2 id="chart-breweries-heading">Breweries</h2>
+          <p id="chart-breweries-avg" class="trend-chart-avg"></p>
+        </div>
+        <div id="chart-breweries-body" class="trend-chart-body" role="img"></div>
+      </article>
+
+      <article id="chart-venues" class="trend-chart" hidden aria-labelledby="chart-venues-heading">
+        <div class="trend-chart-head">
+          <h2 id="chart-venues-heading">Venues</h2>
+          <p id="chart-venues-avg" class="trend-chart-avg"></p>
+        </div>
+        <div id="chart-venues-body" class="trend-chart-body" role="img"></div>
+      </article>
+    </div>
+  </section>
 </main>
+
+<nav class="app-nav" aria-label="Main">
+  <button type="button" id="nav-log" class="nav-tab is-active" aria-current="page">Log</button>
+  <button type="button" id="nav-trends" class="nav-tab">Trends</button>
+</nav>
 
 </div>
 

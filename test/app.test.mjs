@@ -28,12 +28,14 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.8.0-beta with chip + find UI', () => {
+test('boots as v0.9.0-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.8.0-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.9.0-beta');
   assert.ok(d.getElementById('brewery-chip'));
-  assert.ok(d.getElementById('brewery-recent'));
+  assert.ok(d.getElementById('brewery-suggest'));
+  assert.ok(d.getElementById('nav-trends'));
+  assert.equal(d.getElementById('brewery-recent'), null);
   assert.equal(d.getElementById('brewery-suggestions'), null);
   assert.ok(d.getElementById('find-links-btn'));
   assert.ok(d.getElementById('beer-detail'));
@@ -117,12 +119,15 @@ test('account JSON is saved beers, not dated check-ins', () => {
   w.TappdIn.renderHadLog();
   const panel = d.getElementById('had-panel');
   assert.equal(panel.hidden, false);
-  assert.match(d.getElementById('had-count').textContent, /6 check-ins/);
+  assert.equal(d.getElementById('had-count').textContent, '6');
+  assert.match(d.getElementById('had-summary').textContent, /3\s*brewer/);
   const months = [...d.querySelectorAll('#had-list > .month-group')];
   assert.equal(months.length, 6);
   assert.equal(months[0].classList.contains('is-open'), true);
   assert.match(months[0].textContent, /Lupulin Collider Batch 6/);
+  assert.match(months[0].textContent, /North Park/);
   assert.match(months[0].textContent, /4\.4/);
+  assert.ok(months[0].querySelector('.entry-brewery'));
   assert.doesNotMatch(months[0].textContent, /Ghost/);
   assert.match(months[5].textContent, /Saved/);
   months[5].querySelector('.month-toggle').click();
@@ -175,24 +180,94 @@ test('cleans Photos chrome and prefers beer display names', () => {
   assert.equal(w.TappdIn.rowKind({ status: 'done' }), 'miss');
 });
 
-test('shows labeled Recent brewery chips from history without autofocus', () => {
+test('brewery and beer suggest pills appear while typing, not as a default Recent list', () => {
   const { d, w } = boot((dom) => {
     dom.window.localStorage.setItem('tappd-in.breweryHistory', JSON.stringify([
       { name: 'Finback', count: 3, lastUsed: 2 },
       { name: 'North Park', count: 1, lastUsed: 1 },
     ]));
   });
-  const recent = d.getElementById('brewery-recent');
-  assert.equal(recent.hidden, false);
-  assert.match(recent.textContent, /Recent/);
-  assert.match(recent.textContent, /Finback/);
-  assert.match(recent.textContent, /North Park/);
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  w.TappdIn.importCheckinsCsv(csv);
+  assert.equal(d.getElementById('brewery-suggest').hidden, true);
   assert.notEqual(d.activeElement, d.getElementById('brewery-field'));
-  d.querySelector('[data-brewery="Finback"]').click();
-  assert.equal(d.getElementById('brewery-chip').textContent, 'Finback');
-  assert.equal(recent.hidden, true);
+  const breweryField = d.getElementById('brewery-field');
+  breweryField.value = 'Nor';
+  breweryField.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const brewSuggest = d.getElementById('brewery-suggest');
+  assert.equal(brewSuggest.hidden, false);
+  assert.match(brewSuggest.textContent, /North Park/);
+  d.querySelector('#brewery-suggest-chips [data-value]').click();
+  assert.equal(d.getElementById('brewery-chip').textContent, 'North Park');
+  assert.equal(brewSuggest.hidden, true);
   assert.equal(d.activeElement, d.getElementById('beer-field'));
-  void w;
+
+  const beerField = d.getElementById('beer-field');
+  beerField.value = 'Lup';
+  beerField.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const beerSuggest = d.getElementById('beer-suggest');
+  assert.equal(beerSuggest.hidden, false);
+  assert.match(beerSuggest.textContent, /Lupulin Collider Batch 6/);
+});
+
+test('trends page renders check-in charts from the library', () => {
+  const { d, w } = boot();
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  w.TappdIn.importCheckinsCsv(csv);
+  d.getElementById('nav-trends').click();
+  assert.equal(d.getElementById('page-log').hidden, true);
+  assert.equal(d.getElementById('page-trends').hidden, false);
+  assert.equal(d.getElementById('trends-empty').hidden, true);
+  assert.equal(d.getElementById('chart-checkins').hidden, false);
+  assert.equal(d.getElementById('chart-breweries').hidden, false);
+  assert.match(d.getElementById('chart-checkins-body').innerHTML, /svg/);
+});
+
+test('brewery avg and beer match hint reuse the Had list without a new page', () => {
+  const { d, w } = boot();
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  w.TappdIn.importCheckinsCsv(csv);
+  const stats = w.TappdIn.breweryStats('North Park');
+  assert.equal(stats.beerCount, 3);
+  assert.ok(stats.avg > 4);
+  assert.equal(stats.beers.length, 3);
+
+  const had = w.TappdIn.beerMatchState('North Park', 'Lupulin Collider Batch 6');
+  assert.equal(had.kind, 'had');
+  assert.equal(had.rating, 4.4);
+  assert.ok(had.breweryAvg > 4);
+
+  const fresh = w.TappdIn.beerMatchState('North Park', 'Brand New Double');
+  assert.equal(fresh.kind, 'new');
+
+  d.getElementById('brewery-field').value = 'North Park';
+  d.getElementById('brewery-field').dispatchEvent(new w.Event('change', { bubbles: true }));
+  assert.equal(d.getElementById('brewery-chip').textContent, 'North Park');
+  const shelf = d.getElementById('brewery-shelf');
+  assert.equal(shelf.hidden, false);
+  assert.match(d.getElementById('brewery-shelf-summary').textContent, /3 beers/);
+  assert.match(d.getElementById('brewery-shelf-summary').textContent, /avg/);
+  d.getElementById('brewery-shelf-toggle').click();
+  assert.equal(d.getElementById('brewery-shelf-panel').hidden, false);
+  assert.match(d.getElementById('brewery-shelf-list').textContent, /Lupulin Collider Batch 6/);
+  assert.match(d.getElementById('brewery-shelf-list').textContent, /4\.4/);
+
+  d.getElementById('beer-field').value = 'Lupulin Collider Batch 6';
+  d.getElementById('beer-field').dispatchEvent(new w.Event('input', { bubbles: true }));
+  const hint = d.getElementById('beer-match-hint');
+  assert.equal(hint.hidden, false);
+  assert.match(hint.textContent, /Had/);
+  assert.match(hint.textContent, /4\.4/);
+  assert.match(hint.textContent, /avg/);
 });
 
 test('parseUntappdBeerUrl normalizes www, query, slash', () => {
