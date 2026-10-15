@@ -7,16 +7,16 @@ const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 const LIBRARY_KEY = 'tappd-in.beerLibrary';
 
-const APP_VERSION = '0.7.0-beta';
+const APP_VERSION = '0.8.0-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
-  'Import Untappd check-ins CSV — Had + your rating without Search',
-  'Short brewery names (North Park) with no Recent duplicates',
-  'Tap a beer to edit / retry / paste link (Gassy-style detail)',
-  'Main list is search → view → open; edits stay in the detail card',
+  'Had log groups imported check-ins by month',
+  'Tap a past beer to edit rating, venue, serving, and note',
+  'Style, IDs, and the rest of the export stay under Advanced',
+  'Account JSON wish lists sit in Saved, separate from check-ins',
 ];
 
 const BREWERY_SUFFIXES = [
@@ -356,12 +356,23 @@ function migrateBreweryHistory() {
 }
 
 function emptyLibrary() {
-  return { version: 1, importedAt: null, checkinCount: 0, beers: {}, wishBids: {} };
+  return {
+    version: 2,
+    importedAt: null,
+    checkinCount: 0,
+    beers: {},
+    checkins: [],
+    wishlist: [],
+    wishBids: {},
+  };
 }
 
 function loadLibrary() {
-  const lib = loadJson(LIBRARY_KEY, null);
-  if (!lib || typeof lib !== 'object' || !lib.beers) return emptyLibrary();
+  const raw = loadJson(LIBRARY_KEY, null);
+  if (!raw || typeof raw !== 'object' || !raw.beers) return emptyLibrary();
+  const needsMigration = !Array.isArray(raw.checkins);
+  const lib = ensureLibraryShape(raw);
+  if (needsMigration) saveLibrary(lib);
   return lib;
 }
 
@@ -385,6 +396,8 @@ function libraryLookup(brewery, beer) {
 function attachLibraryMeta(row, brewery) {
   const hit = libraryLookup(brewery, row.beer);
   if (!hit) return row;
+  const had = (hit.checkins || 0) > 0 || !!hit.lastHad;
+  if (!had) return row;
   row.had = true;
   row.rating = hit.rating || null;
   row.globalRating = hit.globalRating || null;
@@ -439,49 +452,341 @@ function parseCsv(text) {
   });
 }
 
+function optionalNum(value, { zeroIsEmpty = false } = {}) {
+  if (value == null || String(value).trim() === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (zeroIsEmpty && n === 0) return null;
+  return n;
+}
+
+/** Untappd CSV datetimes are local wall time: "2025-06-29 14:18:28". */
+function parseCheckinDate(raw) {
+  const m = String(raw || '').trim().match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/
+  );
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+}
+
+function checkinTime(checkin) {
+  const d = parseCheckinDate(checkin?.createdAt);
+  return d ? d.getTime() : 0;
+}
+
+function monthKeyFromCheckin(raw) {
+  const d = parseCheckinDate(raw);
+  if (!d) return 'unknown';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthLabelFromKey(key) {
+  if (key === 'unknown') return 'Unknown date';
+  const [year, month] = key.split('-').map(Number);
+  return new Date(year, month - 1, 1).toLocaleString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function fmtRating(n) {
+  if (n == null || !Number.isFinite(Number(n)) || Number(n) <= 0) return '';
+  const rounded = Math.round(Number(n) * 100) / 100;
+  return String(rounded);
+}
+
+function fmtAvg(n) {
+  if (n == null || !Number.isFinite(Number(n)) || Number(n) <= 0) return '';
+  const tenths = Math.round(Number((Number(n) * 10).toFixed(8)));
+  const whole = Math.trunc(tenths / 10);
+  const frac = Math.abs(tenths % 10);
+  return frac ? `${whole}.${frac}` : String(whole);
+}
+
+function fmtCheckinWhen(raw) {
+  const d = parseCheckinDate(raw);
+  if (!d) return '';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function toDatetimeLocalValue(raw) {
+  const d = parseCheckinDate(raw);
+  if (!d) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function fromDatetimeLocalValue(value) {
+  const m = String(value || '').match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  if (!m) return '';
+  return `${m[1]} ${m[2]}:00`;
+}
+
+function checkinFromCsvRow(row, index) {
+  const beer = String(row.beer_name || '').trim();
+  const breweryFull = String(row.brewery_name || '').trim();
+  if (!beer || !breweryFull) return null;
+  const bid = String(row.bid || '').trim();
+  const checkinId = String(row.checkin_id || '').trim();
+  const brewery = shortBreweryName(breweryFull);
+  return {
+    id: checkinId || `row-${index}-${bid || cacheKey(brewery, beer)}`,
+    checkinId,
+    beer,
+    brewery,
+    breweryFull,
+    style: String(row.beer_type || '').trim(),
+    abv: optionalNum(row.beer_abv, { zeroIsEmpty: true }),
+    ibu: optionalNum(row.beer_ibu, { zeroIsEmpty: true }),
+    comment: String(row.comment || '').trim(),
+    venue: String(row.venue_name || '').trim(),
+    venueCity: String(row.venue_city || '').trim(),
+    venueState: String(row.venue_state || '').trim(),
+    venueCountry: String(row.venue_country || '').trim(),
+    venueLat: optionalNum(row.venue_lat),
+    venueLng: optionalNum(row.venue_lng),
+    rating: optionalNum(row.rating_score, { zeroIsEmpty: true }),
+    createdAt: String(row.created_at || '').trim(),
+    bid,
+    breweryId: String(row.brewery_id || '').trim(),
+    breweryCountry: String(row.brewery_country || '').trim(),
+    breweryCity: String(row.brewery_city || '').trim(),
+    breweryState: String(row.brewery_state || '').trim(),
+    flavors: String(row.flavor_profiles || '').trim(),
+    purchaseVenue: String(row.purchase_venue || '').trim(),
+    serving: String(row.serving_type || '').trim(),
+    photoUrl: String(row.photo_url || '').trim(),
+    globalRating: optionalNum(row.global_rating_score, { zeroIsEmpty: true }),
+    globalWeighted: optionalNum(row.global_weighted_rating_score, { zeroIsEmpty: true }),
+    friends: String(row.tagged_friends || '').trim(),
+    toasts: optionalNum(row.total_toasts),
+    commentsCount: optionalNum(row.total_comments),
+    checkinUrl: String(row.checkin_url || '').trim(),
+    beerUrl: String(row.beer_url || '').trim() || (bid ? `https://untappd.com/beer/${bid}` : ''),
+    breweryUrl: String(row.brewery_url || '').trim(),
+  };
+}
+
+function checkinFromAggregate(entry) {
+  const brewery = entry.brewery || shortBreweryName(entry.breweryFull || '');
+  return {
+    id: `legacy-${cacheKey(brewery, entry.beer)}`,
+    checkinId: '',
+    beer: entry.beer || '',
+    brewery,
+    breweryFull: entry.breweryFull || brewery,
+    style: '',
+    abv: null,
+    ibu: null,
+    comment: '',
+    venue: '',
+    venueCity: '',
+    venueState: '',
+    venueCountry: '',
+    venueLat: null,
+    venueLng: null,
+    rating: entry.rating ?? null,
+    createdAt: entry.lastHad || '',
+    bid: entry.bid || '',
+    breweryId: '',
+    breweryCountry: '',
+    breweryCity: '',
+    breweryState: '',
+    flavors: '',
+    purchaseVenue: '',
+    serving: '',
+    photoUrl: '',
+    globalRating: entry.globalRating ?? null,
+    globalWeighted: null,
+    friends: '',
+    toasts: null,
+    commentsCount: null,
+    checkinUrl: '',
+    beerUrl: entry.beerUrl || (entry.bid ? `https://untappd.com/beer/${entry.bid}` : ''),
+    breweryUrl: '',
+  };
+}
+
+function wishlistItem(bid, beer, breweryFull, listName, beerUrl) {
+  const brewery = shortBreweryName(breweryFull || '');
+  return {
+    bid: bid || '',
+    beer: beer || '',
+    brewery,
+    breweryFull: breweryFull || brewery,
+    listName: listName || 'Saved',
+    beerUrl: beerUrl || (bid ? `https://untappd.com/beer/${bid}` : ''),
+    lists: listName ? [listName] : [],
+  };
+}
+
+function dedupeWishlist(items) {
+  const byKey = new Map();
+  for (const item of items) {
+    if (!item || (!item.beer && !item.bid)) continue;
+    const key = item.bid || cacheKey(item.brewery || item.breweryFull, item.beer);
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, {
+        ...item,
+        lists: [...(item.lists || (item.listName ? [item.listName] : []))],
+      });
+      continue;
+    }
+    const name = item.listName;
+    if (name && !prev.lists.includes(name)) prev.lists.push(name);
+    if (!prev.beer && item.beer) prev.beer = item.beer;
+    if (!prev.breweryFull && item.breweryFull) {
+      prev.breweryFull = item.breweryFull;
+      prev.brewery = item.brewery || shortBreweryName(item.breweryFull);
+    }
+    if (!prev.beerUrl && item.beerUrl) prev.beerUrl = item.beerUrl;
+  }
+  return [...byKey.values()];
+}
+
+function rebuildBeerIndex(lib) {
+  const beers = {};
+  const sorted = [...(lib.checkins || [])].sort((a, b) => checkinTime(a) - checkinTime(b));
+  for (const checkin of sorted) {
+    if (!checkin?.beer) continue;
+    const brewery = shortBreweryName(checkin.brewery || checkin.breweryFull || '');
+    const key = cacheKey(brewery, checkin.beer);
+    const prev = beers[key];
+    const bid = checkin.bid || prev?.bid || '';
+    beers[key] = {
+      beer: checkin.beer,
+      brewery,
+      breweryFull: checkin.breweryFull || brewery,
+      bid,
+      beerUrl: checkin.beerUrl || (bid ? `https://untappd.com/beer/${bid}` : '') || prev?.beerUrl || '',
+      rating: checkin.rating != null ? checkin.rating : prev?.rating ?? null,
+      globalRating: checkin.globalRating != null ? checkin.globalRating : prev?.globalRating ?? null,
+      lastHad: checkin.createdAt || prev?.lastHad || null,
+      checkins: (prev?.checkins || 0) + 1,
+      wishlist: false,
+    };
+  }
+  lib.wishBids = {};
+  for (const item of lib.wishlist || []) {
+    if (item.bid) lib.wishBids[item.bid] = true;
+    if (!item.beer) continue;
+    const brewery = shortBreweryName(item.brewery || item.breweryFull || '');
+    const key = cacheKey(brewery, item.beer);
+    if (beers[key]) beers[key].wishlist = true;
+  }
+  lib.beers = beers;
+  lib.checkinCount = (lib.checkins || []).length;
+  lib.version = 2;
+  return lib;
+}
+
+function ensureLibraryShape(lib) {
+  lib.wishBids = lib.wishBids && typeof lib.wishBids === 'object' ? lib.wishBids : {};
+  if (!Array.isArray(lib.wishlist)) lib.wishlist = [];
+  if (!Array.isArray(lib.checkins)) {
+    lib.checkins = [];
+    const carried = [];
+    for (const entry of Object.values(lib.beers || {})) {
+      if (!entry || !entry.beer) continue;
+      const had = (entry.checkins || 0) > 0 || !!entry.lastHad;
+      if (had) lib.checkins.push(checkinFromAggregate(entry));
+      if (entry.wishlist || !had) {
+        carried.push(wishlistItem(
+          entry.bid,
+          entry.beer,
+          entry.breweryFull || entry.brewery,
+          'Saved',
+          entry.beerUrl
+        ));
+      }
+    }
+    lib.wishlist = dedupeWishlist([...lib.wishlist, ...carried]);
+    rebuildBeerIndex(lib);
+  }
+  return lib;
+}
+
+/** Saved beers that are not already in the dated check-in log. */
+function wishlistOnly(lib) {
+  const hadBids = new Set((lib.checkins || []).map((c) => c.bid).filter(Boolean));
+  const hadKeys = new Set(
+    (lib.checkins || []).map((c) => cacheKey(c.brewery || c.breweryFull, c.beer))
+  );
+  return (lib.wishlist || []).filter((item) => {
+    if (!item || (!item.beer && !item.bid)) return false;
+    if (item.bid && hadBids.has(String(item.bid))) return false;
+    if (item.beer && hadKeys.has(cacheKey(item.brewery || item.breweryFull, item.beer))) return false;
+    return true;
+  });
+}
+
+function groupCheckinsByMonth(checkins) {
+  const sorted = [...(checkins || [])].sort((a, b) => checkinTime(b) - checkinTime(a));
+  const groups = [];
+  const byKey = new Map();
+  for (const checkin of sorted) {
+    const key = monthKeyFromCheckin(checkin.createdAt);
+    let group = byKey.get(key);
+    if (!group) {
+      group = { key, checkins: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.checkins.push(checkin);
+  }
+  return groups;
+}
+
+function summarizeCheckins(checkins) {
+  const ratings = (checkins || [])
+    .map((c) => Number(c.rating))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const avg = ratings.length
+    ? ratings.reduce((sum, n) => sum + n, 0) / ratings.length
+    : null;
+  const beers = new Set((checkins || []).map((c) => cacheKey(c.brewery || c.breweryFull, c.beer)));
+  const breweries = new Set(
+    (checkins || []).map((c) => normalizeBreweryText(c.brewery || c.breweryFull)).filter(Boolean)
+  );
+  return {
+    count: (checkins || []).length,
+    avg,
+    beers: beers.size,
+    breweries: breweries.size,
+  };
+}
+
 function importCheckinsCsv(text) {
   const rows = parseCsv(text);
   const lib = loadLibrary();
-  let added = 0;
+  const byId = new Map();
   const brewCounts = new Map();
-  for (const r of rows) {
-    const beer = String(r.beer_name || '').trim();
-    const breweryFull = String(r.brewery_name || '').trim();
-    const bid = String(r.bid || '').trim();
-    if (!beer || !breweryFull) continue;
-    const brewery = shortBreweryName(breweryFull);
-    const key = cacheKey(brewery, beer);
-    const rating = r.rating_score !== '' && r.rating_score != null ? Number(r.rating_score) : null;
-    const globalRating = r.global_rating_score !== '' && r.global_rating_score != null
-      ? Number(r.global_rating_score)
-      : null;
-    const prev = lib.beers[key];
-    lib.beers[key] = {
-      beer,
-      brewery,
-      breweryFull,
-      bid: bid || prev?.bid || '',
-      beerUrl: String(r.beer_url || '').trim() || (bid ? `https://untappd.com/beer/${bid}` : ''),
-      rating: Number.isFinite(rating) ? rating : prev?.rating ?? null,
-      globalRating: Number.isFinite(globalRating) ? globalRating : prev?.globalRating ?? null,
-      lastHad: String(r.created_at || '').trim() || prev?.lastHad || null,
-      checkins: (prev?.checkins || 0) + 1,
-    };
-    added += 1;
-    brewCounts.set(normalizeBreweryText(brewery), {
+  rows.forEach((row, index) => {
+    const checkin = checkinFromCsvRow(row, index);
+    if (!checkin) return;
+    byId.set(checkin.id, checkin);
+    const brewery = checkin.brewery;
+    const brewKey = normalizeBreweryText(brewery);
+    brewCounts.set(brewKey, {
       name: brewery,
-      count: (brewCounts.get(normalizeBreweryText(brewery))?.count || 0) + 1,
+      count: (brewCounts.get(brewKey)?.count || 0) + 1,
     });
-  }
-  lib.checkinCount = Object.values(lib.beers).reduce((n, b) => n + (b.checkins || 1), 0);
+  });
+  lib.checkins = [...byId.values()];
+  rebuildBeerIndex(lib);
   lib.importedAt = new Date().toISOString();
   saveLibrary(lib);
 
-  // Seed Recent with top exported breweries (short names, deduped).
   const top = [...brewCounts.values()].sort((a, b) => b.count - a.count).slice(0, 20);
   for (const b of top.reverse()) touchBreweryHistory(b.name);
   migrateBreweryHistory();
-  return { beers: Object.keys(lib.beers).length, rows: added };
+  return { beers: Object.keys(lib.beers).length, rows: lib.checkins.length };
 }
 
 function importAccountJson(text) {
@@ -491,54 +796,46 @@ function importAccountJson(text) {
   } catch {
     throw new Error('Account file is not valid JSON.');
   }
+  if (!data || typeof data !== 'object' || !Array.isArray(data.custom_lists)) {
+    throw new Error('This JSON has no Untappd lists. Check-ins live in the CSV.');
+  }
   const lib = loadLibrary();
-  lib.wishBids = lib.wishBids || {};
-  let wish = 0;
-  const lists = Array.isArray(data.custom_lists) ? data.custom_lists : [];
-  for (const list of lists) {
+  const items = [];
+  for (const list of data.custom_lists) {
     if (!list || !Array.isArray(list.items)) continue;
+    const listName = String(list.name || list.list_name || 'Saved').trim() || 'Saved';
     for (const item of list.items) {
-      if (item.item_type !== 'beer') continue;
+      if (item.item_type && item.item_type !== 'beer') continue;
       const bid = String(item.item_id || item.bid || '').trim();
       const beer = String(item.beer_name || '').trim();
       const breweryFull = String(item.beer_brewery_name || item.brewery_name || '').trim();
       if (!bid && !beer) continue;
-      if (bid) lib.wishBids[bid] = true;
-      if (beer && breweryFull) {
-        const brewery = shortBreweryName(breweryFull);
-        const key = cacheKey(brewery, beer);
-        if (!lib.beers[key]) {
-          lib.beers[key] = {
-            beer,
-            brewery,
-            breweryFull,
-            bid,
-            beerUrl: bid ? `https://untappd.com/beer/${bid}` : '',
-            rating: null,
-            globalRating: null,
-            lastHad: null,
-            checkins: 0,
-            wishlist: true,
-          };
-        } else {
-          lib.beers[key].wishlist = true;
-          if (bid && !lib.beers[key].bid) lib.beers[key].bid = bid;
-        }
-      }
-      wish += 1;
+      items.push(wishlistItem(
+        bid,
+        beer,
+        breweryFull,
+        listName,
+        bid ? `https://untappd.com/beer/${bid}` : ''
+      ));
     }
   }
+  lib.wishlist = dedupeWishlist(items);
+  rebuildBeerIndex(lib);
   lib.importedAt = new Date().toISOString();
   saveLibrary(lib);
-  return { wish };
+  return { wish: lib.wishlist.length };
 }
 
 function librarySummaryText() {
   const lib = loadLibrary();
-  const n = Object.keys(lib.beers || {}).length;
-  if (!n) return 'No check-ins imported yet.';
+  const n = (lib.checkins || []).length;
+  const saved = wishlistOnly(lib).length;
+  if (!n && !saved) return 'No check-ins imported yet.';
   const when = lib.importedAt ? new Date(lib.importedAt).toLocaleDateString() : '';
-  return `${n} beers in library${when ? ` · imported ${when}` : ''}`;
+  const bits = [];
+  if (n) bits.push(`${n} check-in${n === 1 ? '' : 's'}`);
+  if (saved) bits.push(`${saved} saved`);
+  return bits.join(' · ') + (when ? ` · imported ${when}` : '');
 }
 
 function loadSession() {
@@ -714,7 +1011,9 @@ window.TappdIn = {
   normalizeBreweryText,
   parseCsv,
   importCheckinsCsv,
+  importAccountJson,
   libraryLookup,
+  groupCheckinsByMonth,
   migrateBreweryHistory,
   DEFAULT_RESOLVE_URL,
   DEFAULT_BATCH_URL,
@@ -846,6 +1145,40 @@ const detailStatus = document.getElementById('detail-status');
 const importExportBtn = document.getElementById('import-export-btn');
 const importExportInput = document.getElementById('import-export-input');
 const libraryStatus = document.getElementById('library-status');
+const hadPanel = document.getElementById('had-panel');
+const hadCount = document.getElementById('had-count');
+const hadSummary = document.getElementById('had-summary');
+const hadList = document.getElementById('had-list');
+const checkinEditor = document.getElementById('checkin-editor');
+const checkinBannerText = document.getElementById('checkin-banner-text');
+const checkinDoneBtn = document.getElementById('checkin-done-btn');
+const checkinAdvancedToggle = document.getElementById('checkin-advanced-toggle');
+const checkinAdvanced = document.getElementById('checkin-advanced');
+const checkinIdField = document.getElementById('checkin-id-field');
+const checkinStyle = document.getElementById('checkin-style');
+const checkinAbv = document.getElementById('checkin-abv');
+const checkinIbu = document.getElementById('checkin-ibu');
+const checkinBid = document.getElementById('checkin-bid');
+const checkinBreweryId = document.getElementById('checkin-brewery-id');
+const checkinCity = document.getElementById('checkin-city');
+const checkinState = document.getElementById('checkin-state');
+const checkinPurchase = document.getElementById('checkin-purchase');
+const checkinLat = document.getElementById('checkin-lat');
+const checkinLng = document.getElementById('checkin-lng');
+const checkinFacts = document.getElementById('checkin-facts');
+const checkinWhen = document.getElementById('checkin-when');
+const checkinBeer = document.getElementById('checkin-beer');
+const checkinBrewery = document.getElementById('checkin-brewery');
+const checkinRating = document.getElementById('checkin-rating');
+const checkinServing = document.getElementById('checkin-serving');
+const checkinVenue = document.getElementById('checkin-venue');
+const checkinNote = document.getElementById('checkin-note');
+const checkinDeleteBtn = document.getElementById('checkin-delete-btn');
+
+const SERVING_OPTIONS = ['Draft', 'Can', 'Bottle', 'Taster', 'Crowler', 'Growler', 'Cask', 'Nitro'];
+/** Month keys the user has opened or closed. Missing → newest month open. */
+const hadMonthOpen = new Map();
+let editingCheckinId = null;
 
 let session = loadSession();
 let activeBrewery = '';
@@ -1775,6 +2108,7 @@ if (libraryStatus) {
 }
 syncBreweryChip();
 renderSession();
+renderHadLog();
 // Don't autofocus brewery on open — mobile browsers used to pop a native
 // suggestion list over the first paint. Focus beer only when a brewery is set.
 if (activeBrewery) beerField.focus();
@@ -1820,11 +2154,450 @@ detailCandidates?.addEventListener('click', (e) => {
   pickCandidate(cand.dataset.g, cand.dataset.b, cand.dataset.url);
 });
 
+function hadStatHtml(kind, value, label) {
+  return (
+    `<span class="stat stat-${kind}" role="listitem">` +
+      `<span class="stat-value">${escapeHtml(value)}</span>` +
+      `<span class="stat-label">${escapeHtml(label)}</span>` +
+    `</span>`
+  );
+}
+
+function checkinSummaryHtml(summary, { includeBreweries = false, saved = 0 } = {}) {
+  const bits = [];
+  if (summary.avg != null) {
+    const avgText = summary.count === 1 ? fmtRating(summary.avg) : fmtAvg(summary.avg);
+    bits.push(hadStatHtml('rating', avgText, 'avg'));
+  }
+  if (summary.count) {
+    bits.push(hadStatHtml('beers', String(summary.beers), summary.beers === 1 ? 'beer' : 'beers'));
+  }
+  if (includeBreweries && summary.breweries) {
+    bits.push(hadStatHtml(
+      'breweries',
+      String(summary.breweries),
+      summary.breweries === 1 ? 'brewery' : 'breweries'
+    ));
+  }
+  if (saved) bits.push(hadStatHtml('saved', String(saved), 'saved'));
+  return bits.join('');
+}
+
+function checkinCountLabel(count) {
+  return `${count} check-in${count === 1 ? '' : 's'}`;
+}
+
+function isHadMonthOpen(key, groups) {
+  if (hadMonthOpen.has(key)) return hadMonthOpen.get(key);
+  if (key === 'saved') return groups.length === 0;
+  return groups.length > 0 && groups[0].key === key;
+}
+
+function placeLine(checkin) {
+  const city = checkin.venueCity
+    ? [checkin.venueCity, checkin.venueState].filter(Boolean).join(', ')
+    : '';
+  return [checkin.venue, city].filter(Boolean).join(' · ');
+}
+
+function httpsLink(url, label) {
+  if (!/^https?:/i.test(url || '')) return '';
+  return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+}
+
+function wishlistListsFor(checkin, lib) {
+  return (lib.wishlist || []).filter((item) => {
+    if (checkin.bid && item.bid && String(item.bid) === String(checkin.bid)) return true;
+    return cacheKey(item.brewery || item.breweryFull, item.beer) === cacheKey(checkin.brewery, checkin.beer);
+  }).flatMap((item) => item.lists || (item.listName ? [item.listName] : []));
+}
+
+function checkinFactsHtml(checkin, lib) {
+  const lines = [];
+  if (checkin.globalRating != null) {
+    let text = `Untappd ${fmtRating(checkin.globalRating)}`;
+    if (checkin.globalWeighted != null) text += ` · weighted ${fmtRating(checkin.globalWeighted)}`;
+    lines.push(text);
+  }
+  if (checkin.flavors) lines.push(checkin.flavors);
+  if (checkin.friends) lines.push(`With ${checkin.friends.split(',').map((name) => name.trim()).filter(Boolean).join(', ')}`);
+  const breweryWhere = [checkin.breweryCity, checkin.breweryState].filter(Boolean).join(', ');
+  if (breweryWhere) lines.push(`Brewery in ${breweryWhere}`);
+  if (
+    checkin.breweryFull
+    && checkin.breweryFull !== checkin.brewery
+    && normalizeBreweryText(checkin.breweryFull) === normalizeBreweryText(checkin.brewery)
+  ) {
+    lines.push(checkin.breweryFull);
+  }
+  const lists = [...new Set(wishlistListsFor(checkin, lib))];
+  if (lists.length) lines.push(`Saved on ${lists.join(', ')}`);
+  const toasts = Number(checkin.toasts) || 0;
+  const comments = Number(checkin.commentsCount) || 0;
+  if (toasts || comments) {
+    const bits = [];
+    if (toasts) bits.push(`${toasts} toast${toasts === 1 ? '' : 's'}`);
+    if (comments) bits.push(`${comments} comment${comments === 1 ? '' : 's'}`);
+    lines.push(bits.join(' · '));
+  }
+  const links = [
+    httpsLink(checkin.photoUrl, 'Photo'),
+    httpsLink(checkin.beerUrl, 'Beer page'),
+    httpsLink(checkin.checkinUrl, 'Check-in'),
+    httpsLink(checkin.breweryUrl, 'Brewery'),
+  ].filter(Boolean);
+  const body = lines.map((line) => `<p class="checkin-fact">${escapeHtml(line)}</p>`).join('');
+  const linkRow = links.length ? `<p class="checkin-fact">${links.join(' · ')}</p>` : '';
+  return body + linkRow;
+}
+
+function fillServingSelect(current) {
+  const options = [...SERVING_OPTIONS];
+  if (current && !options.includes(current)) options.unshift(current);
+  checkinServing.innerHTML = '<option value="">—</option>'
+    + options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+  checkinServing.value = current || '';
+}
+
+function numField(value) {
+  return value == null || value === '' ? '' : String(value);
+}
+
+function findCheckin(id) {
+  return (loadLibrary().checkins || []).find((c) => String(c.id) === String(id)) || null;
+}
+
+function closeCheckinEditor() {
+  editingCheckinId = null;
+  if (checkinEditor) checkinEditor.hidden = true;
+  setCollapsibleOpen(checkinAdvanced, false);
+  checkinAdvancedToggle?.setAttribute('aria-expanded', 'false');
+}
+
+function openCheckinEditor(id) {
+  const checkin = findCheckin(id);
+  if (!checkin || !checkinEditor) return;
+  editingCheckinId = String(checkin.id);
+  const when = fmtCheckinWhen(checkin.createdAt);
+  checkinBannerText.textContent = when || 'Check-in';
+  checkinWhen.value = toDatetimeLocalValue(checkin.createdAt);
+  checkinBeer.value = checkin.beer || '';
+  checkinBrewery.value = checkin.brewery || checkin.breweryFull || '';
+  checkinRating.value = fmtRating(checkin.rating);
+  fillServingSelect(checkin.serving || '');
+  checkinVenue.value = checkin.venue || '';
+  checkinNote.value = checkin.comment || '';
+  checkinIdField.value = checkin.checkinId || '';
+  checkinStyle.value = checkin.style || '';
+  checkinAbv.value = numField(checkin.abv);
+  checkinIbu.value = numField(checkin.ibu);
+  checkinBid.value = checkin.bid || '';
+  checkinBreweryId.value = checkin.breweryId || '';
+  checkinCity.value = checkin.venueCity || '';
+  checkinState.value = checkin.venueState || '';
+  checkinPurchase.value = checkin.purchaseVenue || '';
+  checkinLat.value = numField(checkin.venueLat);
+  checkinLng.value = numField(checkin.venueLng);
+  const facts = checkinFactsHtml(checkin, loadLibrary());
+  checkinFacts.innerHTML = facts;
+  checkinFacts.hidden = !facts;
+  setCollapsibleOpen(checkinAdvanced, false);
+  checkinAdvancedToggle.setAttribute('aria-expanded', 'false');
+  checkinEditor.hidden = false;
+  renderHadLog();
+  checkinEditor.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+}
+
+function parseBounded(raw, { min, max, zeroIsEmpty = false } = {}) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const n = Number(text);
+  if (!Number.isFinite(n)) return undefined;
+  if (zeroIsEmpty && n === 0) return null;
+  if (min != null && n < min) return undefined;
+  if (max != null && n > max) return undefined;
+  return n;
+}
+
+function applyCheckinForm(existing) {
+  const next = { ...existing };
+  const beer = checkinBeer.value.trim();
+  const typedBrewery = checkinBrewery.value.trim();
+  if (beer) next.beer = beer;
+  if (typedBrewery) {
+    const unchanged = normalizeBreweryText(typedBrewery) === normalizeBreweryText(existing.brewery)
+      || normalizeBreweryText(typedBrewery) === normalizeBreweryText(existing.breweryFull);
+    next.brewery = shortBreweryName(typedBrewery);
+    next.breweryFull = unchanged ? (existing.breweryFull || typedBrewery) : typedBrewery;
+  }
+  const createdAt = fromDatetimeLocalValue(checkinWhen.value);
+  if (createdAt) next.createdAt = createdAt;
+  const rating = parseBounded(checkinRating.value, { min: 0.25, max: 5, zeroIsEmpty: true });
+  if (rating !== undefined) next.rating = rating;
+  next.serving = checkinServing.value;
+  next.venue = checkinVenue.value.trim();
+  next.comment = checkinNote.value.trim();
+  next.style = checkinStyle.value.trim();
+  const abv = parseBounded(checkinAbv.value, { min: 0, max: 100, zeroIsEmpty: true });
+  if (abv !== undefined) next.abv = abv;
+  const ibu = parseBounded(checkinIbu.value, { min: 0, max: 5000, zeroIsEmpty: true });
+  if (ibu !== undefined) next.ibu = ibu == null ? null : Math.round(ibu);
+  const lat = parseBounded(checkinLat.value, { min: -90, max: 90 });
+  if (lat !== undefined) next.venueLat = lat;
+  const lng = parseBounded(checkinLng.value, { min: -180, max: 180 });
+  if (lng !== undefined) next.venueLng = lng;
+  next.venueCity = checkinCity.value.trim();
+  next.venueState = checkinState.value.trim();
+  next.purchaseVenue = checkinPurchase.value.trim();
+  const bid = checkinBid.value.trim();
+  if (bid !== String(existing.bid || '')) {
+    next.bid = bid;
+    if (bid) next.beerUrl = `https://untappd.com/beer/${bid}`;
+  }
+  return next;
+}
+
+function saveOpenCheckin() {
+  if (!editingCheckinId) return false;
+  const lib = loadLibrary();
+  const idx = (lib.checkins || []).findIndex((c) => String(c.id) === editingCheckinId);
+  if (idx < 0) return false;
+  const beer = checkinBeer.value.trim();
+  const brewery = checkinBrewery.value.trim();
+  if (!beer || !brewery) return false;
+  lib.checkins[idx] = applyCheckinForm(lib.checkins[idx]);
+  rebuildBeerIndex(lib);
+  saveLibrary(lib);
+  hadMonthOpen.set(monthKeyFromCheckin(lib.checkins[idx].createdAt), true);
+  return true;
+}
+
+function removeOpenCheckin() {
+  if (!editingCheckinId) return;
+  const lib = loadLibrary();
+  lib.checkins = (lib.checkins || []).filter((c) => String(c.id) !== editingCheckinId);
+  rebuildBeerIndex(lib);
+  saveLibrary(lib);
+}
+
+function createCheckinElement(checkin) {
+  const li = document.createElement('li');
+  li.className = 'entry';
+  if (String(checkin.id) === editingCheckinId) li.classList.add('is-editing');
+  li.dataset.id = String(checkin.id);
+  li.setAttribute('role', 'button');
+  li.tabIndex = 0;
+  const when = fmtCheckinWhen(checkin.createdAt);
+  const rating = fmtRating(checkin.rating);
+  li.setAttribute(
+    'aria-label',
+    `Edit check-in, ${checkin.beer}${rating ? `, rated ${rating}` : ''}${when ? `, ${when}` : ''}`
+  );
+  const details = [when, checkin.brewery, checkin.serving].filter(Boolean).join(' · ');
+  const where = placeLine(checkin);
+  li.innerHTML = `
+    <div class="entry-top">
+      <span class="entry-name">${escapeHtml(checkin.beer)}</span>
+      ${rating ? `<span class="entry-rating">${escapeHtml(rating)}</span>` : ''}
+    </div>
+    ${details ? `<div class="entry-details">${escapeHtml(details)}</div>` : ''}
+    ${where ? `<div class="entry-location">📍 ${escapeHtml(where)}</div>` : ''}
+    ${checkin.comment ? `<div class="entry-note">${escapeHtml(checkin.comment)}</div>` : ''}
+    <span class="entry-chevron" aria-hidden="true">›</span>
+  `;
+  return li;
+}
+
+function createSavedElement(item) {
+  const url = item.beerUrl || (item.bid ? `https://untappd.com/beer/${item.bid}` : '');
+  const href = url ? beerOpenHref(url, item.bid) : '';
+  const el = document.createElement(href ? 'a' : 'div');
+  el.className = 'entry' + (href ? ' entry-link' : '');
+  if (href) {
+    el.href = href;
+    if (!String(href).startsWith('untappd:')) {
+      el.target = '_blank';
+      el.rel = 'noopener noreferrer';
+    }
+  }
+  const lists = (item.lists || []).filter(Boolean).join(', ');
+  const brewery = item.brewery || shortBreweryName(item.breweryFull || '');
+  el.innerHTML = `
+    <div class="entry-top">
+      <span class="entry-name">${escapeHtml(item.beer || 'Saved beer')}</span>
+    </div>
+    <div class="entry-details">${escapeHtml([brewery, lists].filter(Boolean).join(' · '))}</div>
+    ${href ? '<span class="entry-chevron" aria-hidden="true">›</span>' : ''}
+  `;
+  return el;
+}
+
+function appendMonthGroup(parent, { key, label, countText, summaryHtml, spoken, open, fill }) {
+  const monthLi = document.createElement('li');
+  monthLi.className = 'month-group' + (open ? ' is-open' : '');
+  monthLi.dataset.monthKey = key;
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'month-toggle';
+  toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  toggle.setAttribute(
+    'aria-label',
+    `${label}. ${spoken}. ${open ? 'Collapse' : 'Expand'}.`
+  );
+  toggle.innerHTML = `
+    <span class="month-toggle-row">
+      <span class="month-label">${escapeHtml(label)}</span>
+      <span class="month-count">${escapeHtml(countText)}</span>
+      <span class="month-chevron" aria-hidden="true">▾</span>
+    </span>
+    <span class="month-summary summary-stats">${summaryHtml}</span>
+  `;
+  toggle.addEventListener('click', () => {
+    hadMonthOpen.set(key, !open);
+    renderHadLog();
+  });
+
+  const panel = document.createElement('div');
+  panel.className = 'month-panel';
+  const inner = document.createElement('div');
+  inner.className = 'collapse-inner';
+  const list = document.createElement('ul');
+  list.className = 'month-entries';
+  if (open) fill(list);
+  inner.appendChild(list);
+  panel.appendChild(inner);
+  monthLi.appendChild(toggle);
+  monthLi.appendChild(panel);
+  parent.appendChild(monthLi);
+}
+
+function renderHadLog() {
+  if (!hadPanel || !hadList) return;
+  const lib = loadLibrary();
+  const groups = groupCheckinsByMonth(lib.checkins || []);
+  const saved = wishlistOnly(lib).sort((a, b) => (
+    normalizeBreweryText(a.brewery).localeCompare(normalizeBreweryText(b.brewery))
+    || String(a.beer).localeCompare(String(b.beer))
+  ));
+  const hasLog = groups.length > 0 || saved.length > 0;
+  hadPanel.hidden = !hasLog;
+  if (libraryStatus) {
+    libraryStatus.hidden = false;
+    libraryStatus.textContent = librarySummaryText();
+  }
+  if (!hasLog) {
+    hadList.replaceChildren();
+    if (hadCount) hadCount.textContent = '';
+    if (hadSummary) hadSummary.innerHTML = '';
+    return;
+  }
+
+  const all = summarizeCheckins(lib.checkins || []);
+  if (hadCount) hadCount.textContent = groups.length ? checkinCountLabel(all.count) : `${saved.length} saved`;
+  if (hadSummary) {
+    hadSummary.innerHTML = checkinSummaryHtml(all, {
+      includeBreweries: true,
+      saved: saved.length,
+    });
+  }
+
+  hadList.replaceChildren();
+  for (const group of groups) {
+    const open = isHadMonthOpen(group.key, groups);
+    const summary = summarizeCheckins(group.checkins);
+    const spoken = [
+      checkinCountLabel(summary.count),
+      summary.avg != null ? `${summary.count === 1 ? fmtRating(summary.avg) : fmtAvg(summary.avg)} average` : '',
+      `${summary.beers} beer${summary.beers === 1 ? '' : 's'}`,
+    ].filter(Boolean).join(', ');
+    appendMonthGroup(hadList, {
+      key: group.key,
+      label: monthLabelFromKey(group.key),
+      countText: String(summary.count),
+      summaryHtml: checkinSummaryHtml(summary),
+      spoken,
+      open,
+      fill(list) {
+        for (const checkin of group.checkins) list.appendChild(createCheckinElement(checkin));
+      },
+    });
+  }
+
+  if (saved.length) {
+    const open = isHadMonthOpen('saved', groups);
+    appendMonthGroup(hadList, {
+      key: 'saved',
+      label: 'Saved',
+      countText: String(saved.length),
+      summaryHtml: '<span class="month-note">Wish lists from your account file</span>',
+      spoken: `${saved.length} saved beer${saved.length === 1 ? '' : 's'}`,
+      open,
+      fill(list) {
+        for (const item of saved) list.appendChild(createSavedElement(item));
+      },
+    });
+  }
+}
+
+window.TappdIn.renderHadLog = renderHadLog;
+
+function refreshAfterLibraryChange() {
+  closeCheckinEditor();
+  migrateBreweryHistory();
+  syncBreweryChip();
+  renderSession();
+  renderHadLog();
+}
+
+checkinAdvancedToggle?.addEventListener('click', () => {
+  const opening = checkinAdvanced.hidden || !checkinAdvanced.classList.contains('is-open');
+  setCollapsibleOpen(checkinAdvanced, opening);
+  checkinAdvancedToggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
+});
+
+checkinDoneBtn?.addEventListener('click', () => {
+  closeCheckinEditor();
+  renderHadLog();
+});
+
+checkinEditor?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (!saveOpenCheckin()) return;
+  closeCheckinEditor();
+  renderSession();
+  renderHadLog();
+});
+
+checkinDeleteBtn?.addEventListener('click', () => {
+  if (!editingCheckinId) return;
+  if (!confirm('Remove this check-in from this device?')) return;
+  removeOpenCheckin();
+  closeCheckinEditor();
+  renderSession();
+  renderHadLog();
+});
+
+hadList?.addEventListener('click', (e) => {
+  if (e.target.closest('.month-toggle, a')) return;
+  const li = e.target.closest('.entry[data-id]');
+  if (!li) return;
+  openCheckinEditor(li.dataset.id);
+});
+
+hadList?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const li = e.target.closest?.('.entry[data-id]');
+  if (!li || e.target !== li) return;
+  e.preventDefault();
+  openCheckinEditor(li.dataset.id);
+});
+
 importExportBtn?.addEventListener('click', () => importExportInput?.click());
 importExportInput?.addEventListener('change', async () => {
   const files = [...(importExportInput.files || [])];
   if (!files.length) return;
-  let csvN = 0;
+  let csvRows = 0;
   let wishN = 0;
   try {
     for (const file of files) {
@@ -1834,18 +2607,17 @@ importExportInput?.addEventListener('change', async () => {
         wishN += r.wish || 0;
       } else {
         const r = importCheckinsCsv(text);
-        csvN = r.beers;
+        csvRows = r.rows;
       }
     }
-    migrateBreweryHistory();
-    syncBreweryChip();
-    renderSession();
-    if (libraryStatus) {
-      libraryStatus.hidden = false;
-      libraryStatus.textContent = librarySummaryText()
-        + (wishN ? ` · ${wishN} wish-list items noted` : '');
-    }
-    setHint(settingsStatus, `Imported ${csvN || 'check-in'} beers into your on-device library.`, 'ok');
+    refreshAfterLibraryChange();
+    const parts = [];
+    if (csvRows) parts.push(`Imported ${csvRows} check-in${csvRows === 1 ? '' : 's'}`);
+    if (wishN) parts.push(`Noted ${wishN} saved beer${wishN === 1 ? '' : 's'}`);
+    const newest = groupCheckinsByMonth(loadLibrary().checkins || [])[0];
+    if (newest) hadMonthOpen.set(newest.key, true);
+    renderHadLog();
+    setHint(settingsStatus, `${parts.join('. ')}.`, 'ok');
   } catch (err) {
     setHint(settingsStatus, err?.message || 'Import failed', 'error');
   }

@@ -28,10 +28,10 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.7.0-beta with chip + find UI', () => {
+test('boots as v0.8.0-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.7.0-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.8.0-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-recent'));
   assert.equal(d.getElementById('brewery-suggestions'), null);
@@ -64,14 +64,93 @@ test('import checkins CSV marks Had and resolves Lupulin from export', () => {
     'utf8'
   );
   const r = w.TappdIn.importCheckinsCsv(csv);
+  assert.equal(r.rows, 6);
   assert.ok(r.beers >= 5);
+  w.TappdIn.importCheckinsCsv(csv);
+  const lib = JSON.parse(w.localStorage.getItem('tappd-in.beerLibrary'));
+  assert.equal(lib.checkins.length, 6);
   const hit = w.TappdIn.libraryLookup('North Park', 'Lupulin Collider Batch 6');
   assert.ok(hit);
   assert.equal(hit.bid, '6628541');
+  assert.equal(hit.checkins, 1);
   assert.equal(
     w.TappdIn.parseUntappdBeerUrl('https://untappd.com/beer/6628541').id,
     '6628541'
   );
+  const groups = w.TappdIn.groupCheckinsByMonth(lib.checkins);
+  assert.deepEqual(Array.from(groups, (g) => g.key), ['2026-10', '2026-01', '2025-12', '2025-08', '2025-06']);
+  assert.deepEqual(
+    Array.from(groups.find((g) => g.key === '2025-12').checkins, (c) => c.beer),
+    ['Warm Glow', 'Crispy Morning']
+  );
+});
+
+test('account JSON is saved beers, not dated check-ins', () => {
+  const { w, d } = boot();
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  w.TappdIn.importCheckinsCsv(csv);
+  assert.throws(
+    () => w.TappdIn.importAccountJson('{"user":{}}'),
+    /Check-ins live in the CSV/
+  );
+  w.TappdIn.importAccountJson(JSON.stringify({
+    custom_lists: [{
+      name: 'Wishlist',
+      items: [
+        { item_type: 'beer', item_id: '999', beer_name: 'Ghost', beer_brewery_name: 'Other Brewing' },
+        {
+          item_type: 'beer',
+          item_id: '6628541',
+          beer_name: 'Lupulin Collider Batch 6',
+          beer_brewery_name: 'North Park Beer Company',
+        },
+      ],
+    }],
+  }));
+  assert.equal(w.TappdIn.libraryLookup('Other', 'Ghost'), null);
+  const hit = w.TappdIn.libraryLookup('North Park', 'Lupulin Collider Batch 6');
+  assert.equal(hit.wishlist, true);
+  assert.equal(hit.checkins, 1);
+  w.TappdIn.renderHadLog();
+  const panel = d.getElementById('had-panel');
+  assert.equal(panel.hidden, false);
+  assert.match(d.getElementById('had-count').textContent, /6 check-ins/);
+  const months = [...d.querySelectorAll('#had-list > .month-group')];
+  assert.equal(months.length, 6);
+  assert.equal(months[0].classList.contains('is-open'), true);
+  assert.match(months[0].textContent, /Lupulin Collider Batch 6/);
+  assert.match(months[0].textContent, /4\.4/);
+  assert.doesNotMatch(months[0].textContent, /Ghost/);
+  assert.match(months[5].textContent, /Saved/);
+  months[5].querySelector('.month-toggle').click();
+  assert.match(d.getElementById('had-list').textContent, /Ghost/);
+
+  d.querySelector('.entry[data-id]').click();
+  const editor = d.getElementById('checkin-editor');
+  assert.equal(editor.hidden, false);
+  assert.equal(d.getElementById('checkin-advanced').hidden, true);
+  assert.equal(d.getElementById('checkin-beer').value, 'Lupulin Collider Batch 6');
+  assert.equal(d.getElementById('checkin-brewery').value, 'North Park');
+  assert.equal(d.getElementById('checkin-rating').value, '4.4');
+  assert.equal(d.getElementById('checkin-serving').value, 'Can');
+  assert.equal(d.getElementById('checkin-venue').value, 'Untappd at Home');
+  d.getElementById('checkin-advanced-toggle').click();
+  assert.equal(d.getElementById('checkin-advanced').hidden, false);
+  assert.equal(d.getElementById('checkin-style').value, 'IPA - Triple New England / Hazy');
+  assert.equal(d.getElementById('checkin-bid').value, '6628541');
+  assert.match(d.getElementById('checkin-facts').textContent, /Untappd 4\.38/);
+  assert.match(d.getElementById('checkin-facts').textContent, /Saved on Wishlist/);
+  d.getElementById('checkin-rating').value = '4.75';
+  editor.requestSubmit();
+  assert.equal(editor.hidden, true);
+  assert.equal(
+    w.TappdIn.libraryLookup('North Park', 'Lupulin Collider Batch 6').rating,
+    4.75
+  );
+  assert.match(d.querySelector('.entry[data-id]').textContent, /4\.75/);
 });
 
 test('cleans Photos chrome and prefers beer display names', () => {

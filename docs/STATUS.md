@@ -1,50 +1,39 @@
 # Tappd In — status
 
-**Version:** 0.7.0-beta  
+**Version:** 0.8.0-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
 **Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
-**Updated:** 2026-10-13
+**Updated:** 2026-10-15
 
-## What changed (0.7.0)
+## What changed (0.8.0)
 
-- **Short brewery names:** display/Recent use colloquial labels (`North Park`), not `North Park Beer Company`; history migrates so those are one chip
-- **Import Untappd export:** Settings → import `untappd-checkins.csv` (+ optional `untappd-account.json`). Builds an on-device beer library with Had, your rating, global rating, and `bid` / `beer_url`
-- **Find links uses export first:** known check-ins link via `untappd.com/beer/{bid}` with **no** Perplexity call (e.g. Lupulin Collider Batch 6)
-- **Gassy-style detail:** main list is queue → status → Open; tap the beer name for edit / retry / paste link / remove. No Retry/Fix/Had clutter on the list
-- **Had badge** on the list comes from the export (rating when present), not a checkbox
+- **Had log:** imported check-ins sit under the queue, grouped by month (newest open). Tap a row to edit.
+- **Everyday fields:** date, beer, brewery, your rating, serving, venue, note. The gear holds style, ABV/IBU, IDs, place details, and read-only export facts.
+- **CSV vs JSON:** the check-ins CSV is the dated log and the Had lookup. The account JSON is wish lists, in a collapsed Saved group.
+- Re-importing the CSV replaces the check-in log. Edits stay on this device until the next CSV import.
 
-## What changed (0.6.x)
+## Still true from 0.7.0
 
-- Match clarity, `| Photos` title cleanup, compact Add+Find, cartoon icon, Recent chips
+- Short brewery names (`North Park`). Find links uses an export `bid` before Search.
+- Tap a queued beer to edit, retry, or paste a link. The Had badge comes from the export.
 
 ## Resolve / library spot-checks
 
 | Query | Expected |
 |-------|----------|
-| North Park / Lupulin Collider Batch 6 | After CSV import → linked from export (`bid` 6628541), Had ~4.4 |
+| North Park / Lupulin Collider Batch 6 | After CSV import → export link (`bid` 6628541), Had ~4.4, listed in its check-in month |
 | North Park / X-Raying Rakau | Search/resolve; brewery chip shows **North Park** |
-| Collab-ish brewery strings (`Casey Brewing & Blending`) | Short name keeps `& Blending`; match still brewery+beer keyed |
+| Account JSON wish list | Saved group only; a beer you've also checked in stays in the month log |
 
 ## Known limits
 
-- Export `beer_url` is `/beer/{id}` (not `/b/slug/id`); app accepts both; deep link uses `untappd://beer/{id}`
-- Batch Search still 1 query/beer for beers **not** in the export
-- Brewer collabs: Untappd usually attributes one primary brewery on the beer page; export matches that primary name
-- Account JSON wish-list items are noted; Had is driven by check-ins CSV
-
-## Perplexity Search vs ratings (no code change)
-
-- Search returns titles, URLs, snippets — not a structured Untappd rating field
-- Snippets sometimes mention scores, but that’s unreliable for product UI
-- **Prefer export** (`global_rating_score`, `rating_score`) or a future official Untappd API for ratings
-
-## Assumption conflicts
-
-- Public profile pages ≠ friends graph API
-- Library lives in `localStorage` on device (re-import after clearing site data)
+- Export `beer_url` is `/beer/{id}` (not `/b/slug/id`); deep link uses `untappd://beer/{id}`
+- Batch Search is still 1 query per beer that is not in the export
+- Collabs: Untappd attributes one primary brewery; the export matches that name
+- Library is in `localStorage`. A CSV re-import overwrites local check-in edits.
+- Ratings come from the export. Search snippets are not a ratings source.
 
 ## Suggested next
 
-- Collab beer name heuristics (secondary brewery in beer title)
+- Collab beer name heuristics (secondary brewery in the beer title)
 - Optional “only show new-to-me” filter when queueing under a frequent brewery
-- Redeploy Worker when server-side title cleaning should apply to all clients

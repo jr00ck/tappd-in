@@ -11,8 +11,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tappd In">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.7.0">
-<link rel="icon" href="icons/favicon-32.png?v=0.7.0" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.8.0">
+<link rel="icon" href="icons/favicon-32.png?v=0.8.0" sizes="32x32">
 
 <link rel="stylesheet" href="style.css">
 </head>
@@ -46,7 +46,7 @@
       <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save preferences</button>
       <div class="import-block">
         <h3 class="subsection-title">Your Untappd export</h3>
-        <p class="hint">Import <code>untappd-checkins.csv</code> (and optionally <code>untappd-account.json</code>) to mark beers you’ve had, show your rating, and skip Search when a beer ID is already known.</p>
+        <p class="hint">The check-ins CSV is every beer you've had, with the date, your rating, and where. The account JSON is wish lists and saved beers, without check-in dates. Both stay on this device. The log is below.</p>
         <button type="button" id="import-export-btn" class="secondary-outline-btn">Import check-ins / account</button>
         <input type="file" id="import-export-input" accept=".csv,.json,text/csv,application/json" multiple hidden>
         <p id="library-status" class="hint" hidden></p>
@@ -131,6 +131,123 @@
       <p id="find-stats" class="hint find-stats" hidden></p>
     </div>
     <div id="session-groups" class="session-groups"></div>
+  </section>
+
+  <section id="had-panel" class="had-log" hidden aria-label="Beers you've had">
+    <div id="had-meta" class="log-meta">
+      <div class="summary-head">
+        <h2 class="section-title">Had</h2>
+        <p id="had-count" class="summary-count"></p>
+      </div>
+      <div id="had-summary" class="summary-stats" role="list" aria-label="Check-in totals"></div>
+    </div>
+
+    <form id="checkin-editor" class="card checkin-editor" hidden novalidate>
+      <div class="edit-banner">
+        <span id="checkin-banner-text">Check-in</span>
+        <button type="button" id="checkin-done-btn" class="link-btn">Done</button>
+      </div>
+
+      <div class="field">
+        <div class="field-label-row">
+          <label for="checkin-when">Date &amp; time</label>
+          <button type="button" id="checkin-advanced-toggle" class="icon-btn advanced-toggle" title="Advanced"
+            aria-label="Advanced" aria-expanded="false" aria-controls="checkin-advanced">⚙</button>
+        </div>
+        <div id="checkin-advanced" class="advanced-panel collapsible" hidden>
+          <div class="collapse-inner">
+            <div class="field">
+              <label for="checkin-id-field">Check-in ID</label>
+              <input type="text" id="checkin-id-field" readonly>
+            </div>
+            <p class="advanced-kicker">Beer</p>
+            <div class="field">
+              <label for="checkin-style">Style</label>
+              <input type="text" id="checkin-style" autocomplete="off">
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="checkin-abv">ABV %</label>
+                <input type="text" id="checkin-abv" inputmode="decimal" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="checkin-ibu">IBU</label>
+                <input type="text" id="checkin-ibu" inputmode="numeric" autocomplete="off">
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="checkin-bid">Beer ID</label>
+                <input type="text" id="checkin-bid" inputmode="numeric" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="checkin-brewery-id">Brewery ID</label>
+                <input type="text" id="checkin-brewery-id" readonly>
+              </div>
+            </div>
+            <p class="advanced-kicker">Place</p>
+            <div class="field-row">
+              <div class="field">
+                <label for="checkin-city">City</label>
+                <input type="text" id="checkin-city" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="checkin-state">State</label>
+                <input type="text" id="checkin-state" autocomplete="off">
+              </div>
+            </div>
+            <div class="field">
+              <label for="checkin-purchase">Bought at</label>
+              <input type="text" id="checkin-purchase" autocomplete="off">
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="checkin-lat">Latitude</label>
+                <input type="text" id="checkin-lat" inputmode="decimal" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="checkin-lng">Longitude</label>
+                <input type="text" id="checkin-lng" inputmode="decimal" autocomplete="off">
+              </div>
+            </div>
+            <div id="checkin-facts" class="checkin-facts"></div>
+          </div>
+        </div>
+        <input type="datetime-local" id="checkin-when" required>
+      </div>
+
+      <div class="field">
+        <label for="checkin-beer">Beer</label>
+        <input type="text" id="checkin-beer" autocomplete="off" required>
+      </div>
+      <div class="field">
+        <label for="checkin-brewery">Brewery</label>
+        <input type="text" id="checkin-brewery" autocomplete="off" required>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="checkin-rating">Your rating</label>
+          <input type="text" id="checkin-rating" inputmode="decimal" placeholder="4.25" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="checkin-serving">Serving</label>
+          <select id="checkin-serving"></select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="checkin-venue">Venue</label>
+        <input type="text" id="checkin-venue" autocomplete="off" placeholder="Where you had it">
+      </div>
+      <div class="field">
+        <label for="checkin-note">Note</label>
+        <textarea id="checkin-note" rows="2" placeholder="Optional"></textarea>
+      </div>
+      <button type="submit" class="primary-btn" id="checkin-save-btn">Save</button>
+      <button type="button" id="checkin-delete-btn" class="link-btn checkin-delete">Remove from this device</button>
+      <p class="hint">Saved here only. Untappd itself is unchanged.</p>
+    </form>
+
+    <ul id="had-list" class="entries"></ul>
   </section>
 
   <footer class="app-footer">
