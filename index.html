@@ -11,8 +11,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tappd In">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.9.0">
-<link rel="icon" href="icons/favicon-32.png?v=0.9.0" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=0.9.1">
+<link rel="icon" href="icons/favicon-32.png?v=0.9.1" sizes="32x32">
 
 <link rel="stylesheet" href="style.css">
 </head>
@@ -275,6 +275,27 @@
     </footer>
   </section>
 
+  <section id="page-breweries" class="page" hidden aria-label="Breweries">
+    <div id="brewery-browse-list-wrap">
+      <div class="summary-head">
+        <h2 class="section-title">Breweries</h2>
+        <p id="brewery-browse-count" class="summary-count"></p>
+      </div>
+      <p id="breweries-empty" class="hint trends-empty" hidden>Import check-ins to browse breweries you’ve had.</p>
+      <ul id="brewery-browse-list" class="brewery-browse-list"></ul>
+    </div>
+
+    <div id="brewery-browse-detail" class="brewery-browse-detail" hidden>
+      <div class="edit-banner">
+        <button type="button" id="brewery-browse-back" class="link-btn">← All breweries</button>
+        <button type="button" id="brewery-browse-queue" class="link-btn">Queue beers</button>
+      </div>
+      <h2 id="brewery-browse-name" class="brewery-browse-name"></h2>
+      <div id="brewery-browse-stats" class="summary-stats" role="list" aria-label="Brewery totals"></div>
+      <ul id="brewery-browse-beers" class="brewery-browse-beers"></ul>
+    </div>
+  </section>
+
   <section id="page-trends" class="page" hidden aria-label="Trends">
     <p id="trends-empty" class="hint trends-empty">Import a few check-ins to see trends.</p>
     <div id="trends-content" class="trends-content" hidden>
@@ -323,6 +344,7 @@
 
 <nav class="app-nav" aria-label="Main">
   <button type="button" id="nav-log" class="nav-tab is-active" aria-current="page">Log</button>
+  <button type="button" id="nav-breweries" class="nav-tab">Breweries</button>
   <button type="button" id="nav-trends" class="nav-tab">Trends</button>
 </nav>
 

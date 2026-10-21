@@ -150,8 +150,9 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
 
 /**
  * Batch: 1 query per beer, ≤5 beers per billed Search call.
+ * Uses Perplexity’s per-query result groups (flattening starved later beers).
  * Unconfident items get a second web chunk pass (still batched).
- * Still-unconfident fall back to full multi-variant resolve (≤2 calls each).
+ * True misses (no candidates) fall back to full multi-variant resolve.
  */
 async function resolveBatch(apiKey, items, debug) {
   // Single beer: full multi-variant path (best hit-rate). Batching shines at 2+.
@@ -177,14 +178,16 @@ async function resolveBatch(apiKey, items, debug) {
       const slice = indices.slice(i, i + CHUNK);
       const queries = slice.map((idx) => buildBatchQuery(items[idx].brewery, items[idx].beer));
       providerCalls += 1;
-      // Merge all hits from the multi-query call; per-beer scoring + brewery
-      // filters keep matches separated (more reliable than depending on group shape).
-      const pages = await perplexityPages(apiKey, {
+      const groups = await perplexityGrouped(apiKey, {
         queries,
         searchType,
-        maxResults: 20,
+        maxResults: 15,
       });
-      slice.forEach((idx) => {
+      // If the provider returns one flat list instead of per-query groups,
+      // share it (legacy shape) rather than assigning all hits to beer 0.
+      const flatShare = groups.length === 1 && slice.length > 1 ? groups[0] : null;
+      slice.forEach((idx, j) => {
+        const pages = flatShare || groups[j] || [];
         results[idx].pages = [...results[idx].pages, ...pages];
         results[idx].body = buildResolveResponse(items[idx].brewery, items[idx].beer, results[idx].pages, {
           pass: searchType === 'fast' ? 'batch_fast' : 'batch_web',
@@ -206,8 +209,20 @@ async function resolveBatch(apiKey, items, debug) {
     await runChunked(needWeb, 'web');
   }
 
-  // No per-beer multi-variant fallback here — that would defeat batching.
-  // Unconfident rows surface candidates + Untappd search in the PWA.
+  // Empty-candidate misses only — keep credits for real gaps, not “needs a pick”.
+  const needVariant = results
+    .map((r, i) => {
+      if (!r.body || r.body.confident) return -1;
+      if ((r.body.candidates || []).length) return -1;
+      return i;
+    })
+    .filter((i) => i >= 0);
+  for (const idx of needVariant) {
+    const body = await resolveWithPasses(apiKey, items[idx].brewery, items[idx].beer, debug);
+    providerCalls += body.providerCalls || 0;
+    results[idx].body = body;
+    results[idx].pages = [];
+  }
 
   return {
     results: results.map((r) => {

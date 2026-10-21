@@ -168,7 +168,7 @@ main {
   bottom: 0;
   z-index: 40;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 6px;
   padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
   background: rgba(26, 20, 16, 0.94);
@@ -185,7 +185,7 @@ main {
   border-radius: 12px;
   min-height: 44px;
   font: inherit;
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   font-weight: 700;
   letter-spacing: -0.01em;
   cursor: pointer;
@@ -716,6 +716,116 @@ input[readonly] {
   font-weight: 700;
   color: var(--stat-rating);
   font-variant-numeric: tabular-nums;
+}
+
+.brewery-browse-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.brewery-browse-row {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  min-height: 52px;
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.brewery-browse-row:active {
+  background: rgba(232, 168, 56, 0.1);
+}
+
+.brewery-browse-row-name {
+  min-width: 0;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brewery-browse-row-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.brewery-browse-row-avg {
+  font-weight: 700;
+  color: var(--stat-rating);
+}
+
+.brewery-browse-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.brewery-browse-name {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.brewery-browse-beers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.brewery-browse-beer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-height: 44px;
+}
+
+.brewery-browse-beer-name {
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brewery-browse-beer-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.brewery-browse-beer-rating {
+  font-weight: 700;
+  color: var(--stat-rating);
 }
 
 #beer-field {
@@ -1313,6 +1423,7 @@ input[readonly] {
 }
 
 .stat-rating .stat-value { color: var(--stat-rating); }
+.stat-checkins .stat-value { color: var(--stat-checkins); }
 .stat-beers .stat-value { color: var(--stat-beers); }
 .stat-breweries .stat-value { color: var(--stat-breweries); }
 .stat-venues .stat-value { color: var(--stat-venues); }

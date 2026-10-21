@@ -6,6 +6,7 @@ import {
   buildResolveResponse,
   buildQueryVariants,
   flattenProviderResults,
+  groupProviderResults,
   isConfident,
   cleanUntappdTitle,
   parseTitleParts,
@@ -63,6 +64,18 @@ test('flattenProviderResults handles grouped multi-query arrays', () => {
   });
   assert.equal(flat.length, 2);
   assert.equal(flat[1].url, 'https://untappd.com/b/b/2');
+});
+
+test('groupProviderResults keeps per-query buckets for batch resolve', () => {
+  const groups = groupProviderResults({
+    results: [
+      [{ title: 'A', url: 'https://untappd.com/b/a/1', snippet: '' }],
+      [{ title: 'B', url: 'https://untappd.com/b/b/2', snippet: '' }],
+    ],
+  });
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0][0].url, 'https://untappd.com/b/a/1');
+  assert.equal(groups[1][0].url, 'https://untappd.com/b/b/2');
 });
 
 test('Finback Something Mosaic beats Double/Nothing look-alikes; /photos + checkin fixtures', () => {

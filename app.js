@@ -7,16 +7,16 @@ const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 const LIBRARY_KEY = 'tappd-in.beerLibrary';
 
-const APP_VERSION = '0.9.0-beta';
+const APP_VERSION = '0.9.1-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
+  'Brewery typeahead tap now keeps the full name (no more “Nort” stuck)',
+  'Breweries tab — browse every logged brewery, then beers + stats',
+  'Multi-beer Find links use per-query search results (fewer false misses)',
   'Log and Trends tabs with check-in, rating, and brewery charts',
-  'Typeahead pills for brewery and beer from your Had list',
-  'See if a beer is new — your rating and the brewery average',
-  'Select a brewery to skim every beer you’ve had there',
 ];
 
 const BREWERY_SUFFIXES = [
@@ -1221,8 +1221,20 @@ const beerSuggestChips = document.getElementById('beer-suggest-chips');
 let breweryShelfOpen = false;
 const pageLog = document.getElementById('page-log');
 const pageTrends = document.getElementById('page-trends');
+const pageBreweries = document.getElementById('page-breweries');
 const navLog = document.getElementById('nav-log');
+const navBreweries = document.getElementById('nav-breweries');
 const navTrends = document.getElementById('nav-trends');
+const breweryBrowseListWrap = document.getElementById('brewery-browse-list-wrap');
+const breweryBrowseCount = document.getElementById('brewery-browse-count');
+const breweriesEmpty = document.getElementById('breweries-empty');
+const breweryBrowseList = document.getElementById('brewery-browse-list');
+const breweryBrowseDetail = document.getElementById('brewery-browse-detail');
+const breweryBrowseBack = document.getElementById('brewery-browse-back');
+const breweryBrowseQueue = document.getElementById('brewery-browse-queue');
+const breweryBrowseName = document.getElementById('brewery-browse-name');
+const breweryBrowseStats = document.getElementById('brewery-browse-stats');
+const breweryBrowseBeers = document.getElementById('brewery-browse-beers');
 const trendsEmpty = document.getElementById('trends-empty');
 const trendsContent = document.getElementById('trends-content');
 const chartCheckinsEl = document.getElementById('chart-checkins');
@@ -1610,9 +1622,14 @@ function renderBreweryShelf() {
   breweryShelf.classList.toggle('is-open', open);
 }
 
+let suppressBreweryChange = false;
+
 function pickBrewerySuggest(name) {
   const brewery = shortBreweryName(name);
   if (!brewery) return;
+  // Blur/change can fire before click on mobile and commit the partial typed
+  // value ("Nort") — hold change off while we apply the chip.
+  suppressBreweryChange = true;
   breweryField.value = brewery;
   activeBrewery = brewery;
   breweryShelfOpen = false;
@@ -1620,6 +1637,7 @@ function pickBrewerySuggest(name) {
   syncBreweryChip();
   beerField.focus();
   refreshBeerSuggest();
+  queuePromise.resolve().then(() => { suppressBreweryChange = false; });
 }
 
 function pickBeerSuggest(raw) {
@@ -2448,6 +2466,9 @@ breweryField.addEventListener('keydown', (e) => {
 });
 
 breweryField.addEventListener('change', () => {
+  // Chip pointerdown can still blur→change on some browsers; don't commit
+  // the half-typed value over a pending suggest pick.
+  if (suppressBreweryChange) return;
   const v = shortBreweryName(breweryField.value);
   if (v) {
     breweryField.value = v;
@@ -2559,10 +2580,24 @@ renderHadLog();
 // suggestion list over the first paint. Focus beer only when a brewery is set.
 if (activeBrewery) beerField.focus();
 
+// pointerdown + preventDefault keeps the input focused so blur/change does
+// not commit partial text before the chip click applies the full name.
+brewerySuggestChips?.addEventListener('pointerdown', (e) => {
+  const btn = e.target.closest('[data-value]');
+  if (!btn) return;
+  e.preventDefault();
+  suppressBreweryChange = true;
+  setTimeout(() => { suppressBreweryChange = false; }, 400);
+});
 brewerySuggestChips?.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-value]');
   if (!btn) return;
   pickBrewerySuggest(btn.getAttribute('data-value'));
+});
+beerSuggestChips?.addEventListener('pointerdown', (e) => {
+  const btn = e.target.closest('[data-value]');
+  if (!btn) return;
+  e.preventDefault();
 });
 beerSuggestChips?.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-value]');
@@ -2582,7 +2617,17 @@ breweryShelfList?.addEventListener('click', (e) => {
   beerField.focus();
 });
 navLog?.addEventListener('click', () => showPage('log'));
+navBreweries?.addEventListener('click', () => showPage('breweries'));
 navTrends?.addEventListener('click', () => showPage('trends'));
+breweryBrowseList?.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-brewery]');
+  if (!btn) return;
+  openBreweryBrowseDetail(btn.getAttribute('data-brewery') || '');
+});
+breweryBrowseBack?.addEventListener('click', () => closeBreweryBrowseDetail());
+breweryBrowseQueue?.addEventListener('click', () => {
+  if (selectedBrowseBrewery) queueBreweryFromBrowse(selectedBrowseBrewery);
+});
 checkinLocateBtn?.addEventListener('click', () => locateCheckinVenue());
 checkinVenue?.addEventListener('change', () => maybeSuggestBreweryFromVenue());
 
@@ -3557,18 +3602,140 @@ function renderTrends() {
   if (trendsEmpty) trendsEmpty.hidden = any;
 }
 
+let selectedBrowseBrewery = '';
+
+function loggedBreweryStatsList() {
+  const byKey = new Map();
+  for (const checkin of loadLibrary().checkins || []) {
+    const name = shortBreweryName(checkin.brewery || checkin.breweryFull || '');
+    const key = normalizeBreweryText(name);
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, name);
+  }
+  return [...byKey.values()]
+    .map((name) => breweryStats(name))
+    .filter((s) => s.beerCount > 0)
+    .sort((a, b) => b.checkins - a.checkins || a.name.localeCompare(b.name));
+}
+
+function closeBreweryBrowseDetail() {
+  selectedBrowseBrewery = '';
+  if (breweryBrowseDetail) breweryBrowseDetail.hidden = true;
+  if (breweryBrowseListWrap) breweryBrowseListWrap.hidden = false;
+}
+
+function openBreweryBrowseDetail(name) {
+  const stats = breweryStats(name);
+  if (!stats.beerCount || !breweryBrowseDetail) return;
+  selectedBrowseBrewery = stats.name;
+  if (breweryBrowseListWrap) breweryBrowseListWrap.hidden = true;
+  breweryBrowseDetail.hidden = false;
+  if (breweryBrowseName) breweryBrowseName.textContent = stats.name;
+  if (breweryBrowseStats) {
+    const bits = [];
+    bits.push(hadStatHtml(
+      'checkins',
+      String(stats.checkins),
+      stats.checkins === 1 ? 'check-in' : 'check-ins'
+    ));
+    bits.push(hadStatHtml(
+      'beers',
+      String(stats.beerCount),
+      stats.beerCount === 1 ? 'beer' : 'beers'
+    ));
+    if (stats.avg != null) {
+      bits.push(hadStatHtml('rating', fmtAvg(stats.avg) || fmtRating(stats.avg), 'avg'));
+    }
+    breweryBrowseStats.innerHTML = bits.join('');
+  }
+  if (breweryBrowseBeers) {
+    breweryBrowseBeers.innerHTML = stats.beers.map((item) => {
+      const rating = item.rating != null ? fmtRating(item.rating) : '';
+      const when = fmtCheckinWhen(item.lastHad);
+      const checkins = item.checkins > 1 ? `${item.checkins}×` : '';
+      return (
+        `<li class="brewery-browse-beer">` +
+          `<span class="brewery-browse-beer-name">${escapeHtml(item.beer)}</span>` +
+          `<span class="brewery-browse-beer-meta">` +
+            (rating ? `<span class="brewery-browse-beer-rating">${escapeHtml(rating)}</span>` : '') +
+            (checkins ? `<span>${escapeHtml(checkins)}</span>` : '') +
+            (when ? `<span>${escapeHtml(when)}</span>` : '') +
+          `</span>` +
+        `</li>`
+      );
+    }).join('');
+  }
+}
+
+function renderBreweryBrowse() {
+  if (!breweryBrowseList) return;
+  const list = loggedBreweryStatsList();
+  if (breweryBrowseCount) {
+    breweryBrowseCount.textContent = list.length ? String(list.length) : '';
+  }
+  if (breweriesEmpty) breweriesEmpty.hidden = list.length > 0;
+  if (!list.length) {
+    breweryBrowseList.innerHTML = '';
+    closeBreweryBrowseDetail();
+    return;
+  }
+  breweryBrowseList.innerHTML = list.map((stats) => {
+    const avg = stats.avg != null ? (fmtAvg(stats.avg) || fmtRating(stats.avg)) : '';
+    const beerLabel = `${stats.beerCount} beer${stats.beerCount === 1 ? '' : 's'}`;
+    return (
+      `<li>` +
+        `<button type="button" class="brewery-browse-row" data-brewery="${escapeHtml(stats.name)}">` +
+          `<span class="brewery-browse-row-name">${escapeHtml(stats.name)}</span>` +
+          `<span class="brewery-browse-row-meta">` +
+            (avg ? `<span class="brewery-browse-row-avg">${escapeHtml(avg)}</span>` : '') +
+            `<span>${escapeHtml(beerLabel)}</span>` +
+          `</span>` +
+        `</button>` +
+      `</li>`
+    );
+  }).join('');
+  if (selectedBrowseBrewery) {
+    const still = list.some((s) => normalizeBreweryText(s.name) === normalizeBreweryText(selectedBrowseBrewery));
+    if (still) openBreweryBrowseDetail(selectedBrowseBrewery);
+    else closeBreweryBrowseDetail();
+  } else {
+    closeBreweryBrowseDetail();
+  }
+}
+
+function queueBreweryFromBrowse(name) {
+  const brewery = shortBreweryName(name);
+  if (!brewery) return;
+  activeBrewery = brewery;
+  breweryField.value = brewery;
+  breweryShelfOpen = true;
+  syncBreweryChip();
+  refreshBeerSuggest();
+  showPage('log');
+  beerField.focus();
+  setHint(entryStatus, `${brewery} — add a beer or pick one below.`);
+}
+
 function showPage(page) {
   const onTrends = page === 'trends';
-  if (pageLog) pageLog.hidden = onTrends;
+  const onBreweries = page === 'breweries';
+  const onLog = !onTrends && !onBreweries;
+  if (pageLog) pageLog.hidden = !onLog;
+  if (pageBreweries) pageBreweries.hidden = !onBreweries;
   if (pageTrends) pageTrends.hidden = !onTrends;
-  navLog?.classList.toggle('is-active', !onTrends);
+  navLog?.classList.toggle('is-active', onLog);
+  navBreweries?.classList.toggle('is-active', onBreweries);
   navTrends?.classList.toggle('is-active', onTrends);
+  navLog?.removeAttribute('aria-current');
+  navBreweries?.removeAttribute('aria-current');
+  navTrends?.removeAttribute('aria-current');
   if (onTrends) {
-    navLog?.removeAttribute('aria-current');
     navTrends?.setAttribute('aria-current', 'page');
     renderTrends();
+  } else if (onBreweries) {
+    navBreweries?.setAttribute('aria-current', 'page');
+    renderBreweryBrowse();
   } else {
-    navTrends?.removeAttribute('aria-current');
     navLog?.setAttribute('aria-current', 'page');
   }
 }
@@ -3580,6 +3747,7 @@ function refreshAfterLibraryChange() {
   renderSession();
   renderHadLog();
   if (!pageTrends?.hidden) renderTrends();
+  if (!pageBreweries?.hidden) renderBreweryBrowse();
 }
 
 checkinAdvancedToggle?.addEventListener('click', () => {

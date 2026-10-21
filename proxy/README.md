@@ -20,6 +20,8 @@ Unused (Catalog.beer parked — delete later if desired, not required for MVP):
 
 `GET /resolve?brewery=Finback&beer=Something+Mosaic`
 
+`POST /resolve-batch` with `{ "items": [{ "brewery", "beer" }, ...] }` — up to 5 beers per billed Search call (per-query result groups), web pass for unconfident, multi-variant fallback only for empty-candidate misses.
+
 Deployed:
 
 `https://tappd-in-catalog.rerun-cost-xbox.workers.dev/resolve`

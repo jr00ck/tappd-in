@@ -28,13 +28,15 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.9.0-beta with chip + find UI', () => {
+test('boots as v0.9.1-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.9.0-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.9.1-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-suggest'));
   assert.ok(d.getElementById('nav-trends'));
+  assert.ok(d.getElementById('nav-breweries'));
+  assert.ok(d.getElementById('page-breweries'));
   assert.equal(d.getElementById('brewery-recent'), null);
   assert.equal(d.getElementById('brewery-suggestions'), null);
   assert.ok(d.getElementById('find-links-btn'));
@@ -211,6 +213,52 @@ test('brewery and beer suggest pills appear while typing, not as a default Recen
   const beerSuggest = d.getElementById('beer-suggest');
   assert.equal(beerSuggest.hidden, false);
   assert.match(beerSuggest.textContent, /Lupulin Collider Batch 6/);
+});
+
+test('brewery suggest tap wins over blur change with partial typed text', () => {
+  const { d, w } = boot((dom) => {
+    dom.window.localStorage.setItem('tappd-in.breweryHistory', JSON.stringify([
+      { name: 'North Park', count: 2, lastUsed: 1 },
+    ]));
+  });
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  w.TappdIn.importCheckinsCsv(csv);
+  const breweryField = d.getElementById('brewery-field');
+  breweryField.value = 'Nort';
+  breweryField.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const chip = d.querySelector('#brewery-suggest-chips [data-value="North Park"]');
+  assert.ok(chip);
+  // Mobile-ish sequence: pointerdown (prevent blur commit), then change with
+  // partial text, then click the chip.
+  chip.dispatchEvent(new w.Event('pointerdown', { bubbles: true, cancelable: true }));
+  breweryField.dispatchEvent(new w.Event('change', { bubbles: true }));
+  chip.click();
+  assert.equal(d.getElementById('brewery-chip').textContent, 'North Park');
+  assert.notEqual(d.getElementById('brewery-chip').textContent, 'Nort');
+});
+
+test('Breweries tab lists logged breweries and opens beer stats', () => {
+  const { d, w } = boot();
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  w.TappdIn.importCheckinsCsv(csv);
+  d.getElementById('nav-breweries').click();
+  assert.equal(d.getElementById('page-log').hidden, true);
+  assert.equal(d.getElementById('page-breweries').hidden, false);
+  const list = d.getElementById('brewery-browse-list');
+  assert.match(list.textContent, /North Park/);
+  list.querySelector('[data-brewery="North Park"]').click();
+  assert.equal(d.getElementById('brewery-browse-detail').hidden, false);
+  assert.match(d.getElementById('brewery-browse-name').textContent, /North Park/);
+  assert.match(d.getElementById('brewery-browse-beers').textContent, /Lupulin/);
+  d.getElementById('brewery-browse-queue').click();
+  assert.equal(d.getElementById('page-log').hidden, false);
+  assert.equal(d.getElementById('brewery-chip').textContent, 'North Park');
 });
 
 test('trends page renders check-in charts from the library', () => {
