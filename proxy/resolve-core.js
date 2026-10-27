@@ -120,17 +120,45 @@ export function extractBeerUrlsFromText(...parts) {
   return found;
 }
 
-export function buildQueryVariants(brewery, beer) {
+/**
+ * Bare colloquial names ("Mortalis") miss Untappd titles that include
+ * "Brewing Company" / "Beer Co". Keep the typed form first, then expand.
+ */
+const BREWERY_SEARCH_SUFFIXES = [
+  'Brewing Company',
+  'Brewing Co',
+  'Brewery',
+  'Beer Company',
+  'Beer Co',
+];
+
+export function breweryLooksBare(name) {
+  return !/\b(brewing|brewery|beer|company|co)\b/i.test(String(name || ''));
+}
+
+export function brewerySearchForms(brewery) {
   const b = String(brewery || '').trim();
+  if (!b) return [];
+  const forms = [b];
+  if (breweryLooksBare(b)) {
+    for (const suffix of BREWERY_SEARCH_SUFFIXES) forms.push(`${b} ${suffix}`);
+  }
+  return forms;
+}
+
+export function buildQueryVariants(brewery, beer) {
   const beerName = String(beer || '').trim();
+  const forms = brewerySearchForms(brewery);
+  const primary = forms[0] || '';
+  // Prefer a suffixed form for title-shaped queries Untappd indexes.
+  const rich = forms[1] || primary;
   // Up to 5 variants; one multi-query Search request bills as one.
-  // Prefer exact beer title form Untappd uses: "{Beer} - {Brewery}"
   return [
-    `${b} ${beerName} untappd`,
-    `${beerName} ${b} untappd.com/b`,
-    `${beerName} by ${b}`,
-    `${beerName} ${b} beer`,
-    `"${beerName} - ${b}" untappd`,
+    `${rich} ${beerName} untappd`,
+    `${beerName} ${rich} untappd.com/b`,
+    `${beerName} by ${primary}`,
+    `${beerName} ${primary} beer`,
+    `"${beerName} - ${rich}" untappd`,
   ].filter(Boolean).slice(0, 5);
 }
 
@@ -252,7 +280,9 @@ export function isConfident(best, second, beer, brewery) {
 
 /** One strong query per beer — used when batching up to 5 beers in one Search call. */
 export function buildBatchQuery(brewery, beer) {
-  const b = String(brewery || '').trim();
+  const forms = brewerySearchForms(brewery);
+  // Prefer "... Brewing Company" when the client only sent the short display name.
+  const b = forms[1] || forms[0] || '';
   const beerName = String(beer || '').trim();
   // Unquoted — quoted OCR typos (racau) over-constrain the provider.
   return `${b} ${beerName} untappd`;
