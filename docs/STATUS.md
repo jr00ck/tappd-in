@@ -3,7 +3,7 @@
 **Version:** 0.9.3-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
 **Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
-**Updated:** 2026-10-27
+**Updated:** 2026-10-28
 
 ## What changed (0.9.3)
 
