@@ -28,10 +28,10 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.9.2-beta with chip + find UI', () => {
+test('boots as v0.9.3-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.9.2-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.9.3-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-suggest'));
   assert.ok(d.getElementById('nav-trends'));
@@ -275,6 +275,8 @@ test('Breweries tab lists logged breweries and opens beer stats', () => {
   assert.equal(d.getElementById('page-breweries').hidden, false);
   const list = d.getElementById('brewery-browse-list');
   assert.match(list.textContent, /North Park/);
+  assert.ok(d.getElementById('brewery-browse-filter'));
+  assert.ok(d.querySelector('.sort-pill[data-sort="name"]'));
   list.querySelector('[data-brewery="North Park"]').click();
   assert.equal(d.getElementById('brewery-browse-detail').hidden, false);
   assert.match(d.getElementById('brewery-browse-name').textContent, /North Park/);
@@ -282,6 +284,76 @@ test('Breweries tab lists logged breweries and opens beer stats', () => {
   d.getElementById('brewery-browse-queue').click();
   assert.equal(d.getElementById('page-log').hidden, false);
   assert.equal(d.getElementById('brewery-chip').textContent, 'North Park');
+});
+
+test('Breweries tab search + sort by rating / beers', () => {
+  const { d, w } = boot();
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  w.TappdIn.importCheckinsCsv(csv);
+  d.getElementById('nav-breweries').click();
+  const sorted = w.TappdIn.sortBreweryBrowseList([
+    { name: 'Zebra', beerCount: 1, avg: 4.9 },
+    { name: 'Alpha', beerCount: 5, avg: 3.1 },
+    { name: 'Mid', beerCount: 2, avg: null },
+  ], 'rating');
+  assert.equal(sorted[0].name, 'Zebra');
+  assert.equal(w.TappdIn.sortBreweryBrowseList(sorted, 'beers')[0].name, 'Alpha');
+  assert.equal(w.TappdIn.sortBreweryBrowseList(sorted, 'name')[0].name, 'Alpha');
+
+  d.querySelector('.sort-pill[data-sort="beers"]').click();
+  assert.match(d.getElementById('brewery-browse-list').textContent, /North Park/);
+  const filter = d.getElementById('brewery-browse-filter');
+  filter.value = 'north';
+  filter.dispatchEvent(new w.Event('input', { bubbles: true }));
+  assert.match(d.getElementById('brewery-browse-list').textContent, /North Park/);
+  assert.doesNotMatch(d.getElementById('brewery-browse-list').textContent, /Other|Ghost/i);
+  filter.value = 'zzzz-nope';
+  filter.dispatchEvent(new w.Event('input', { bubbles: true }));
+  assert.equal(d.getElementById('breweries-filter-empty').hidden, false);
+});
+
+test('beer detail brewery edit moves the row and clears a miss', () => {
+  const { d, w } = boot();
+  d.getElementById('brewery-field').value = 'Bone';
+  d.getElementById('brewery-field').dispatchEvent(new w.Event('change', { bubbles: true }));
+  d.getElementById('beer-field').value = 'Haus IPA';
+  d.getElementById('add-beer-btn').click();
+  let session = JSON.parse(w.localStorage.getItem('tappd-in.session'));
+  assert.equal(session.groups[0].brewery, 'Bone');
+  session.groups[0].beers[0].status = 'error';
+  session.groups[0].beers[0].error = 'No Untappd match';
+  w.localStorage.setItem('tappd-in.session', JSON.stringify(session));
+  // Re-boot session from storage by reloading UI path
+  d.getElementById('session-groups').innerHTML = '';
+  // Soft reopen: click the queued row through a fresh boot helper
+  const { d: d2, w: w2 } = boot((dom) => {
+    dom.window.localStorage.setItem('tappd-in.session', JSON.stringify(session));
+  });
+  d2.querySelector('[data-open-detail]')?.click();
+  assert.equal(d2.getElementById('beer-detail').hidden, false);
+  assert.equal(d2.getElementById('detail-beer').value, 'Haus IPA');
+  assert.equal(d2.getElementById('detail-brewery').value, 'Bone');
+  d2.getElementById('detail-brewery').value = 'Bone Haus Brewing';
+  d2.getElementById('detail-brewery').dispatchEvent(new w.Event('change', { bubbles: true }));
+  session = JSON.parse(w2.localStorage.getItem('tappd-in.session'));
+  assert.equal(session.groups.length, 1);
+  assert.equal(session.groups[0].brewery, 'Bone Haus');
+  assert.equal(session.groups[0].breweryFull, 'Bone Haus Brewing');
+  assert.equal(session.groups[0].beers[0].beer, 'Haus IPA');
+  assert.equal(session.groups[0].beers[0].status, 'pending');
+  assert.equal(d2.getElementById('detail-brewery').value, 'Bone Haus Brewing');
+});
+
+test('beerOpenHref prefers https Universal Links over untappd://', () => {
+  const { w } = boot();
+  assert.equal(
+    w.TappdIn.beerOpenHref('https://untappd.com/b/foo/123', '123'),
+    'https://untappd.com/b/foo/123'
+  );
+  assert.equal(w.TappdIn.beerOpenHref('', '99'), 'https://untappd.com/beer/99');
 });
 
 test('trends page renders check-in charts from the library', () => {

@@ -1,9 +1,15 @@
 # Tappd In — status
 
-**Version:** 0.9.2-beta  
+**Version:** 0.9.3-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
 **Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
 **Updated:** 2026-10-27
+
+## What changed (0.9.3)
+
+- **Breweries tab** — search filter + sort by A–Z, rating, or beer count
+- **Beer details** — brewery is editable; fixing a mistype keeps the beer and clears the old miss for Retry
+- **Open in Untappd** — uses https Universal Links / App Links so an already-open Untappd app still navigates to the beer
 
 ## What changed (0.9.2)
 

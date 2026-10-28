@@ -234,6 +234,7 @@ main {
 input[type="text"],
 input[type="url"],
 input[type="number"],
+input[type="search"],
 input[type="datetime-local"],
 select,
 textarea {
@@ -716,6 +717,48 @@ input[readonly] {
   font-weight: 700;
   color: var(--stat-rating);
   font-variant-numeric: tabular-nums;
+}
+
+.brewery-browse-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.brewery-browse-filter-field {
+  margin-bottom: 0;
+}
+
+.sort-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sort-pill {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sort-pill.is-active {
+  border-color: rgba(232, 168, 56, 0.55);
+  background: rgba(232, 168, 56, 0.14);
+  color: var(--text);
+}
+
+.detail-brewery-hint {
+  margin: 6px 0 0;
 }
 
 .brewery-browse-list {
