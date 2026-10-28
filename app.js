@@ -7,17 +7,19 @@ const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 const LIBRARY_KEY = 'tappd-in.beerLibrary';
 
-const APP_VERSION = '0.9.2-beta';
+const APP_VERSION = '0.9.3-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
-  'Find links keeps “Brewing Company” (and friends) for Untappd search — display stays short',
-  'Search Untappd opens the Untappd app when possible instead of an in-app browser',
-  'Brewery typeahead tap now keeps the full name (no more “Nort” stuck)',
-  'Breweries tab — browse every logged brewery, then beers + stats',
+  'Breweries tab — search + sort by A–Z, rating, or beer count',
+  'Beer details — edit brewery when a lookup missed (keeps the beer name)',
+  'Open in Untappd uses https Universal Links so warm-start still opens the beer',
+  'Find links keeps “Brewing Company” for Untappd search — display stays short',
 ];
+
+const BREWERY_BROWSE_SORTS = new Set(['name', 'rating', 'beers']);
 
 const BREWERY_SUFFIXES = [
   'Brewing Company',
@@ -228,10 +230,37 @@ function isAndroidUa() {
   return /Android/i.test(navigator.userAgent || '');
 }
 
-/** Matched beers: deep-link into the Untappd app on phones; https elsewhere. */
+/**
+ * Prefer https beer URLs. Universal Links / App Links re-navigate to the beer
+ * even when Untappd is already open; untappd:// often only foregrounds the app.
+ */
 function beerOpenHref(httpsUrl, beerId) {
-  if (preferUntappdApp() && beerId) return `untappd://beer/${beerId}`;
-  return httpsUrl;
+  if (httpsUrl) return httpsUrl;
+  if (beerId) return `https://untappd.com/beer/${beerId}`;
+  return '#';
+}
+
+/** Open a matched beer in Untappd (app when possible) without an in-app browser. */
+function openUntappdBeer(httpsUrl, beerId) {
+  const web = beerOpenHref(httpsUrl, beerId);
+  if (!web || web === '#') return;
+  if (!preferUntappdApp()) {
+    window.open(web, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  if (isAndroidUa()) {
+    try {
+      const u = new URL(web);
+      const hostPath = `${u.host}${u.pathname}${u.search}`;
+      const fallback = encodeURIComponent(web);
+      location.href = `intent://${hostPath}#Intent;scheme=https;package=com.untappdllc.app;S.browser_fallback_url=${fallback};end`;
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  // Top-level navigation so iOS Universal Links can hand off to Untappd.
+  location.href = web;
 }
 
 /**
@@ -336,16 +365,20 @@ function saveJson(key, value) {
 
 function loadSettings() {
   const parsed = loadJson(SETTINGS_KEY, {});
+  const sort = String(parsed.breweryBrowseSort || 'name');
   return {
     resolveUrl: String(parsed.resolveUrl || '').trim(),
     openInApp: parsed.openInApp !== false,
+    breweryBrowseSort: BREWERY_BROWSE_SORTS.has(sort) ? sort : 'name',
   };
 }
 
 function saveSettings(settings) {
+  const sort = String(settings.breweryBrowseSort || 'name');
   saveJson(SETTINGS_KEY, {
     resolveUrl: String(settings.resolveUrl || '').trim(),
     openInApp: settings.openInApp !== false,
+    breweryBrowseSort: BREWERY_BROWSE_SORTS.has(sort) ? sort : 'name',
   });
 }
 
@@ -1179,8 +1212,11 @@ window.TappdIn = {
   untappdSearchHref,
   openUntappdSearch,
   beerOpenHref,
+  openUntappdBeer,
   breweryFullFromInput,
   resolveBreweryQuery,
+  sortBreweryBrowseList,
+  applyDetailBreweryChange,
   resolveBeer,
   resolveBeerBatch,
   slugSeriesBase,
@@ -1319,6 +1355,8 @@ const navTrends = document.getElementById('nav-trends');
 const breweryBrowseListWrap = document.getElementById('brewery-browse-list-wrap');
 const breweryBrowseCount = document.getElementById('brewery-browse-count');
 const breweriesEmpty = document.getElementById('breweries-empty');
+const breweryBrowseFilterInput = document.getElementById('brewery-browse-filter');
+const breweriesFilterEmpty = document.getElementById('breweries-filter-empty');
 const breweryBrowseList = document.getElementById('brewery-browse-list');
 const breweryBrowseDetail = document.getElementById('brewery-browse-detail');
 const breweryBrowseBack = document.getElementById('brewery-browse-back');
@@ -1997,9 +2035,11 @@ function renderSession() {
         : row.beer;
       let openBlock = '';
       if (kind === 'linked') {
-        const href = escapeHtml(beerOpenHref(row.url, row.beerId || row.id || row.exportBid));
+        const beerId = row.beerId || row.id || row.exportBid || '';
+        const href = escapeHtml(beerOpenHref(row.url, beerId));
         openBlock = `
-          <a class="beer-open" href="${href}" target="_blank" rel="noopener noreferrer">
+          <a class="beer-open" href="${href}" target="_blank" rel="noopener noreferrer"
+            data-url="${escapeHtml(row.url || '')}" data-beer-id="${escapeHtml(String(beerId))}">
             <span class="beer-open-label">Open in Untappd</span>
           </a>`;
       } else if (kind === 'pending') {
@@ -2429,12 +2469,82 @@ function tryAddFromFields() {
   }
 }
 
+function resetRowLookup(row) {
+  row.status = 'pending';
+  row.url = null;
+  row.confident = false;
+  row.forceVariantPick = false;
+  row.candidates = [];
+  row.error = '';
+  row.beerId = null;
+  row.id = row.id || `b-${Date.now()}`;
+  row.slug = null;
+  row.title = null;
+  row.displayBeer = null;
+  row.fromCache = false;
+  row.source = null;
+  row.untappdSearchUrl = null;
+}
+
+/**
+ * Apply beer-detail brewery edits. Moves the row to another group when the
+ * name changes and clears a prior miss/link so Retry uses the new brewery.
+ */
+function applyDetailBreweryChange(rawInput) {
+  if (!editingDetail) return null;
+  const found = findRow(editingDetail.gid, editingDetail.bidx);
+  if (!found) return null;
+  const raw = String(rawInput || '').trim();
+  const short = shortBreweryName(raw);
+  if (!short) return found;
+  const full = breweryFullFromInput(raw) || libraryBreweryFull(short) || '';
+  const { group: oldGroup, row } = found;
+
+  if (detailBeer?.value.trim()) {
+    row.beer = detailBeer.value.trim();
+  }
+
+  if (normalizeBreweryText(oldGroup.brewery) === normalizeBreweryText(short)) {
+    if (full && (!oldGroup.breweryFull || full.length > String(oldGroup.breweryFull).length)) {
+      oldGroup.breweryFull = full;
+    }
+    oldGroup.brewery = shortBreweryName(oldGroup.brewery) || short;
+    touchBreweryHistory(short, full || oldGroup.breweryFull);
+    saveSession(session);
+    return { group: oldGroup, row };
+  }
+
+  const hadLookup = !!(row.url || (row.candidates || []).length || row.status === 'error'
+    || row.status === 'done' || row.status === 'loading');
+  if (hadLookup) resetRowLookup(row);
+
+  oldGroup.beers.splice(Number(editingDetail.bidx), 1);
+  if (!oldGroup.beers.length) {
+    session.groups = session.groups.filter((g) => g !== oldGroup);
+  }
+
+  const newGroup = ensureGroup(short, full);
+  newGroup.beers.unshift(row);
+  touchBreweryHistory(short, full);
+  activeBrewery = short;
+  activeBreweryFull = full || '';
+  editingDetail = { gid: newGroup.id, bidx: 0 };
+  saveSession(session);
+  syncBreweryChip();
+  return { group: newGroup, row };
+}
+
 function closeBeerDetail() {
-  if (editingDetail && detailBeer) {
-    const found = findRow(editingDetail.gid, editingDetail.bidx);
-    if (found && detailBeer.value.trim()) {
-      found.row.beer = detailBeer.value.trim();
-      saveSession(session);
+  if (editingDetail) {
+    if (detailBeer?.value.trim()) {
+      const found = findRow(editingDetail.gid, editingDetail.bidx);
+      if (found) {
+        found.row.beer = detailBeer.value.trim();
+        saveSession(session);
+      }
+    }
+    if (detailBrewery && 'value' in detailBrewery) {
+      applyDetailBreweryChange(detailBrewery.value);
     }
   }
   editingDetail = null;
@@ -2453,10 +2563,9 @@ function openBeerDetail(gid, bidx) {
   const kind = rowKind(row);
   detailBannerText.textContent = 'Beer details';
   detailBeer.value = row.beer;
-  detailBrewery.textContent = shortBreweryName(group.brewery)
-    + (group.breweryFull && shortBreweryName(group.breweryFull) !== shortBreweryName(group.brewery)
-      ? ` · ${group.breweryFull}`
-      : '');
+  if (detailBrewery && 'value' in detailBrewery) {
+    detailBrewery.value = group.breweryFull || group.brewery || '';
+  }
 
   if (row.had || row.rating != null) {
     const bits = ['Had before'];
@@ -2490,10 +2599,15 @@ function openBeerDetail(gid, bidx) {
 
   if (kind === 'linked' && row.url) {
     detailOpen.hidden = false;
-    detailOpen.href = beerOpenHref(row.url, row.beerId || row.id || row.exportBid);
+    const openHref = beerOpenHref(row.url, row.beerId || row.id || row.exportBid);
+    detailOpen.href = openHref;
+    detailOpen.dataset.url = row.url || '';
+    detailOpen.dataset.beerId = String(row.beerId || row.id || row.exportBid || '');
   } else {
     detailOpen.hidden = true;
     detailOpen.removeAttribute('href');
+    detailOpen.removeAttribute('data-url');
+    detailOpen.removeAttribute('data-beer-id');
   }
 
   detailSearch.hidden = false;
@@ -2532,6 +2646,7 @@ saveSettingsBtn.addEventListener('click', () => {
   saveSettings({
     resolveUrl: prev.resolveUrl,
     openInApp: !!openInAppInput.checked,
+    breweryBrowseSort: prev.breweryBrowseSort,
   });
   setHint(settingsStatus, 'Preferences saved on this device.', 'ok');
   renderSession();
@@ -2757,6 +2872,21 @@ breweryBrowseList?.addEventListener('click', (e) => {
   if (!btn) return;
   openBreweryBrowseDetail(btn.getAttribute('data-brewery') || '');
 });
+breweryBrowseFilterInput?.addEventListener('input', () => {
+  breweryBrowseFilter = breweryBrowseFilterInput.value || '';
+  // Filtering keeps you on the list view.
+  if (!breweryBrowseDetail?.hidden) closeBreweryBrowseDetail();
+  renderBreweryBrowse();
+});
+document.querySelector('.sort-pills')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sort-pill[data-sort]');
+  if (!btn) return;
+  const sort = btn.getAttribute('data-sort') || 'name';
+  if (!BREWERY_BROWSE_SORTS.has(sort)) return;
+  const prev = loadSettings();
+  saveSettings({ ...prev, breweryBrowseSort: sort });
+  renderBreweryBrowse();
+});
 breweryBrowseBack?.addEventListener('click', () => closeBreweryBrowseDetail());
 breweryBrowseQueue?.addEventListener('click', () => {
   if (selectedBrowseBrewery) queueBreweryFromBrowse(selectedBrowseBrewery);
@@ -2810,6 +2940,24 @@ detailBeer?.addEventListener('change', () => {
   if (!found) return;
   found.row.beer = detailBeer.value.trim() || found.row.beer;
   saveSession(session);
+});
+detailBrewery?.addEventListener('change', () => {
+  if (!editingDetail) return;
+  const moved = applyDetailBreweryChange(detailBrewery.value);
+  if (moved) {
+    renderDetailIfOpen();
+    setHint(detailStatus || entryStatus, 'Brewery updated — tap Retry lookup if needed.', 'ok');
+  }
+});
+detailOpen?.addEventListener('click', (e) => {
+  e.preventDefault();
+  openUntappdBeer(detailOpen.dataset.url || detailOpen.href, detailOpen.dataset.beerId);
+});
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('a.beer-open');
+  if (!link || link.id === 'detail-open') return;
+  e.preventDefault();
+  openUntappdBeer(link.dataset.url || link.href, link.dataset.beerId);
 });
 detailCandidates?.addEventListener('click', (e) => {
   const cand = e.target.closest('.cand-btn');
@@ -3092,13 +3240,13 @@ function createSavedElement(item) {
   const url = item.beerUrl || (item.bid ? `https://untappd.com/beer/${item.bid}` : '');
   const href = url ? beerOpenHref(url, item.bid) : '';
   const el = document.createElement(href ? 'a' : 'div');
-  el.className = 'entry' + (href ? ' entry-link' : '');
+  el.className = 'entry' + (href ? ' entry-link beer-open' : '');
   if (href) {
     el.href = href;
-    if (!String(href).startsWith('untappd:')) {
-      el.target = '_blank';
-      el.rel = 'noopener noreferrer';
-    }
+    el.dataset.url = url;
+    el.dataset.beerId = String(item.bid || '');
+    el.target = '_blank';
+    el.rel = 'noopener noreferrer';
   }
   const lists = (item.lists || []).filter(Boolean).join(', ');
   const brewery = item.brewery || shortBreweryName(item.breweryFull || '');
@@ -3754,6 +3902,7 @@ function renderTrends() {
 }
 
 let selectedBrowseBrewery = '';
+let breweryBrowseFilter = '';
 
 function loggedBreweryStatsList() {
   const byKey = new Map();
@@ -3765,8 +3914,37 @@ function loggedBreweryStatsList() {
   }
   return [...byKey.values()]
     .map((name) => breweryStats(name))
-    .filter((s) => s.beerCount > 0)
-    .sort((a, b) => b.checkins - a.checkins || a.name.localeCompare(b.name));
+    .filter((s) => s.beerCount > 0);
+}
+
+function sortBreweryBrowseList(list, sort) {
+  const mode = BREWERY_BROWSE_SORTS.has(sort) ? sort : 'name';
+  const rows = [...(list || [])];
+  if (mode === 'rating') {
+    rows.sort((a, b) => (
+      (b.avg ?? -1) - (a.avg ?? -1)
+      || b.beerCount - a.beerCount
+      || a.name.localeCompare(b.name)
+    ));
+  } else if (mode === 'beers') {
+    rows.sort((a, b) => (
+      b.beerCount - a.beerCount
+      || (b.avg ?? -1) - (a.avg ?? -1)
+      || a.name.localeCompare(b.name)
+    ));
+  } else {
+    rows.sort((a, b) => a.name.localeCompare(b.name) || b.beerCount - a.beerCount);
+  }
+  return rows;
+}
+
+function syncBreweryBrowseSortPills(sort) {
+  const mode = BREWERY_BROWSE_SORTS.has(sort) ? sort : 'name';
+  document.querySelectorAll('.sort-pill[data-sort]').forEach((btn) => {
+    const on = btn.getAttribute('data-sort') === mode;
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
 }
 
 function closeBreweryBrowseDetail() {
@@ -3820,12 +3998,33 @@ function openBreweryBrowseDetail(name) {
 
 function renderBreweryBrowse() {
   if (!breweryBrowseList) return;
-  const list = loggedBreweryStatsList();
-  if (breweryBrowseCount) {
-    breweryBrowseCount.textContent = list.length ? String(list.length) : '';
+  const settings = loadSettings();
+  const sort = settings.breweryBrowseSort || 'name';
+  syncBreweryBrowseSortPills(sort);
+  if (breweryBrowseFilterInput && breweryBrowseFilterInput.value !== breweryBrowseFilter) {
+    // Keep the field in sync when re-rendering from elsewhere.
+    if (!document.activeElement || document.activeElement !== breweryBrowseFilterInput) {
+      breweryBrowseFilterInput.value = breweryBrowseFilter;
+    }
   }
-  if (breweriesEmpty) breweriesEmpty.hidden = list.length > 0;
-  if (!list.length) {
+
+  const all = loggedBreweryStatsList();
+  const q = normalizeMatchText(breweryBrowseFilter);
+  const filtered = q
+    ? all.filter((s) => normalizeMatchText(s.name).includes(q) || normalizeBreweryText(s.name).includes(q))
+    : all;
+  const list = sortBreweryBrowseList(filtered, sort);
+
+  if (breweryBrowseCount) {
+    breweryBrowseCount.textContent = all.length
+      ? (q ? `${list.length}/${all.length}` : String(all.length))
+      : '';
+  }
+  if (breweriesEmpty) breweriesEmpty.hidden = all.length > 0;
+  if (breweriesFilterEmpty) {
+    breweriesFilterEmpty.hidden = !(all.length && q && !list.length);
+  }
+  if (!all.length) {
     breweryBrowseList.innerHTML = '';
     closeBreweryBrowseDetail();
     return;
@@ -3846,7 +4045,7 @@ function renderBreweryBrowse() {
     );
   }).join('');
   if (selectedBrowseBrewery) {
-    const still = list.some((s) => normalizeBreweryText(s.name) === normalizeBreweryText(selectedBrowseBrewery));
+    const still = all.some((s) => normalizeBreweryText(s.name) === normalizeBreweryText(selectedBrowseBrewery));
     if (still) openBreweryBrowseDetail(selectedBrowseBrewery);
     else closeBreweryBrowseDetail();
   } else {

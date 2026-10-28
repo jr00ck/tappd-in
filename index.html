@@ -70,7 +70,12 @@
         <label for="detail-beer">Beer</label>
         <input type="text" id="detail-beer" autocomplete="off">
       </div>
-      <p id="detail-brewery" class="hint detail-brewery"></p>
+      <div class="field">
+        <label for="detail-brewery">Brewery</label>
+        <input type="text" id="detail-brewery" autocomplete="off"
+          placeholder="Fix a mistyped brewery" enterkeyhint="done">
+        <p class="hint detail-brewery-hint">Changing brewery clears the old link so you can retry.</p>
+      </div>
       <p id="detail-had-line" class="hint" hidden></p>
       <p id="detail-status-line" class="hint"></p>
       <div id="detail-candidates" class="detail-candidates" hidden></div>
@@ -281,7 +286,20 @@
         <h2 class="section-title">Breweries</h2>
         <p id="brewery-browse-count" class="summary-count"></p>
       </div>
+      <div class="brewery-browse-toolbar">
+        <div class="field brewery-browse-filter-field">
+          <label for="brewery-browse-filter">Search</label>
+          <input type="search" id="brewery-browse-filter" autocomplete="off"
+            placeholder="Filter by name" enterkeyhint="search">
+        </div>
+        <div class="sort-pills" role="group" aria-label="Sort breweries">
+          <button type="button" class="sort-pill is-active" data-sort="name" aria-pressed="true">A–Z</button>
+          <button type="button" class="sort-pill" data-sort="rating" aria-pressed="false">Rating</button>
+          <button type="button" class="sort-pill" data-sort="beers" aria-pressed="false">Beers</button>
+        </div>
+      </div>
       <p id="breweries-empty" class="hint trends-empty" hidden>Import check-ins to browse breweries you’ve had.</p>
+      <p id="breweries-filter-empty" class="hint" hidden>No breweries match that search.</p>
       <ul id="brewery-browse-list" class="brewery-browse-list"></ul>
     </div>
 

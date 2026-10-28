@@ -4,7 +4,12 @@ All notable changes to Tappd In are listed here.
 Generated with [git-cliff](https://git-cliff.org); keep commits conventional when you can.
 
 <!-- git-cliff: end of header -->
-## [0.9.2-beta] - 2026-10-27
+## [0.9.3-beta] - 2026-10-28
+
+### Features
+
+- Brewery browse sort/search, editable detail brewery, UL beer opens
+## [0.9.2-beta] - 2026-10-28
 
 ### Bug Fixes
 
