@@ -5,6 +5,9 @@ import {
   scoreCandidate,
   buildResolveResponse,
   buildQueryVariants,
+  buildBatchQuery,
+  brewerySearchForms,
+  breweryLooksBare,
   flattenProviderResults,
   groupProviderResults,
   isConfident,
@@ -53,6 +56,18 @@ test('buildQueryVariants returns up to 5 strings', () => {
   const q = buildQueryVariants('Finback', 'Something Mosaic');
   assert.ok(q.length >= 4 && q.length <= 5);
   assert.ok(q.some((s) => /untappd/i.test(s)));
+});
+
+test('bare brewery names expand with Brewing Company for search queries', () => {
+  assert.equal(breweryLooksBare('Mortalis'), true);
+  assert.equal(breweryLooksBare('Mortalis Brewing Company'), false);
+  const forms = brewerySearchForms('Mortalis');
+  assert.ok(forms.includes('Mortalis'));
+  assert.ok(forms.includes('Mortalis Brewing Company'));
+  const q = buildQueryVariants('Mortalis', 'Strange Philosophies');
+  assert.ok(q.some((s) => /Mortalis Brewing Company/i.test(s)));
+  assert.match(buildBatchQuery('New Wave', 'Hazy IPA'), /New Wave Brewing Company/);
+  assert.match(buildBatchQuery('North Park Beer Co', 'Lupulin'), /^North Park Beer Co /);
 });
 
 test('flattenProviderResults handles grouped multi-query arrays', () => {

@@ -7,16 +7,16 @@ const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 const LIBRARY_KEY = 'tappd-in.beerLibrary';
 
-const APP_VERSION = '0.9.1-beta';
+const APP_VERSION = '0.9.2-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
+  'Find links keeps “Brewing Company” (and friends) for Untappd search — display stays short',
+  'Search Untappd opens the Untappd app when possible instead of an in-app browser',
   'Brewery typeahead tap now keeps the full name (no more “Nort” stuck)',
   'Breweries tab — browse every logged brewery, then beers + stats',
-  'Multi-beer Find links use per-query search results (fewer false misses)',
-  'Log and Trends tabs with check-in, rating, and brewery charts',
 ];
 
 const BREWERY_SUFFIXES = [
@@ -131,6 +131,39 @@ function shortBreweryName(name) {
   return t || String(name || '').trim();
 }
 
+/** Keep the typed Untappd-style name when it had a suffix we strip for display. */
+function breweryFullFromInput(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return '';
+  const short = shortBreweryName(t);
+  return short && short !== t ? t : '';
+}
+
+/** Prefer a stored/full brewery name for resolve + Untappd search queries. */
+function libraryBreweryFull(shortName) {
+  const key = normalizeBreweryText(shortName);
+  if (!key) return '';
+  const lib = loadLibrary();
+  for (const c of lib.checkins || []) {
+    const full = String(c.breweryFull || '').trim();
+    if (full && normalizeBreweryText(full) === key) return full;
+  }
+  for (const entry of Object.values(lib.beers || {})) {
+    const full = String(entry.breweryFull || '').trim();
+    if (full && normalizeBreweryText(full) === key) return full;
+  }
+  const hist = loadBreweryHistory().find((h) => normalizeBreweryText(h.name) === key);
+  if (hist?.fullName) return String(hist.fullName).trim();
+  return '';
+}
+
+function resolveBreweryQuery(group) {
+  const full = String(group?.breweryFull || '').trim()
+    || libraryBreweryFull(group?.brewery)
+    || '';
+  return full || String(group?.brewery || '').trim();
+}
+
 function cacheKey(brewery, beer) {
   return `${normalizeBreweryText(brewery)}|${normalizeMatchText(beer)}`;
 }
@@ -191,6 +224,10 @@ function preferUntappdApp() {
   return 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0;
 }
 
+function isAndroidUa() {
+  return /Android/i.test(navigator.userAgent || '');
+}
+
 /** Matched beers: deep-link into the Untappd app on phones; https elsewhere. */
 function beerOpenHref(httpsUrl, beerId) {
   if (preferUntappdApp() && beerId) return `untappd://beer/${beerId}`;
@@ -198,11 +235,53 @@ function beerOpenHref(httpsUrl, beerId) {
 }
 
 /**
- * Untappd has no reliable public search:// deep link. Use https search —
- * on iOS, users can still "Open in Untappd" from the sheet when available.
+ * Untappd has no public search:// deep link, and /search is not a Universal Link.
+ * Keep https as the href; openUntappdSearch() prefers the native app on tap.
  */
 function untappdSearchHref(brewery, beer) {
   return untappdSearchWebUrl(brewery, beer);
+}
+
+/**
+ * Open Untappd search in the native app when possible (avoids in-app browser).
+ * Android: intent → Untappd package. iOS: copy query + open app via /home UL.
+ */
+function openUntappdSearch(brewery, beer, statusEl) {
+  const web = untappdSearchWebUrl(brewery, beer);
+  if (!preferUntappdApp()) {
+    window.open(web, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  const q = [brewery, beer].map((s) => String(s || '').trim()).filter(Boolean).join(' ');
+  if (isAndroidUa()) {
+    const hostPath = `untappd.com/search?q=${encodeURIComponent(q)}&type=beer`;
+    const fallback = encodeURIComponent(web);
+    location.href = `intent://${hostPath}#Intent;scheme=https;package=com.untappdllc.app;S.browser_fallback_url=${fallback};end`;
+    return;
+  }
+  // iOS: /search is not in apple-app-site-association. Copy the query and open
+  // Untappd via /home (which is). Fall back to Safari search if the app didn’t open.
+  const done = () => {
+    if (statusEl) setHint(statusEl, 'Search copied — paste it in Untappd.', 'ok');
+    const started = Date.now();
+    const fallbackTimer = setTimeout(() => {
+      if (document.visibilityState === 'visible' && Date.now() - started >= 700) {
+        location.href = web;
+      }
+    }, 850);
+    const cancel = () => clearTimeout(fallbackTimer);
+    window.addEventListener('pagehide', cancel, { once: true });
+    window.addEventListener('blur', cancel, { once: true });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') cancel();
+    }, { once: true });
+    location.href = 'https://untappd.com/home';
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(q).then(done, done);
+  } else {
+    done();
+  }
 }
 
 const U_MARK = '<span class="u-mark" aria-hidden="true">U</span>';
@@ -311,15 +390,20 @@ function loadBreweryHistory() {
   return Array.isArray(list) ? list : [];
 }
 
-function touchBreweryHistory(name) {
+function touchBreweryHistory(name, fullName) {
   const n = shortBreweryName(name);
   if (!n) return;
   const key = normalizeBreweryText(n);
+  const full = breweryFullFromInput(fullName || name) || String(fullName || '').trim();
   const all = loadBreweryHistory();
   const prior = all.find((x) => normalizeBreweryText(x.name) === key);
   const prev = all.filter((x) => normalizeBreweryText(x.name) !== key);
+  const keptFull = full && normalizeBreweryText(full) === key
+    ? full
+    : (prior?.fullName || '');
   prev.unshift({
     name: n,
+    fullName: keptFull || undefined,
     count: (prior?.count || 0) + 1,
     lastUsed: Date.now(),
   });
@@ -335,16 +419,19 @@ function migrateBreweryHistory() {
     const short = shortBreweryName(item.name);
     const key = normalizeBreweryText(short);
     if (!key) continue;
+    const full = breweryFullFromInput(item.fullName || item.name) || item.fullName || '';
     const prev = byKey.get(key);
     if (!prev) {
       byKey.set(key, {
         name: short,
+        fullName: full || undefined,
         count: item.count || 1,
         lastUsed: item.lastUsed || 0,
       });
     } else {
       prev.count = (prev.count || 0) + (item.count || 0);
       prev.lastUsed = Math.max(prev.lastUsed || 0, item.lastUsed || 0);
+      if (full && (!prev.fullName || full.length > prev.fullName.length)) prev.fullName = full;
       // Prefer the shorter colloquial label when both map to the same brewery.
       if (short.length < prev.name.length) prev.name = short;
     }
@@ -1089,7 +1176,11 @@ window.TappdIn = {
   clearSessionKeepCache,
   clearResolveCache,
   untappdSearchWebUrl,
+  untappdSearchHref,
+  openUntappdSearch,
   beerOpenHref,
+  breweryFullFromInput,
+  resolveBreweryQuery,
   resolveBeer,
   resolveBeerBatch,
   slugSeriesBase,
@@ -1323,6 +1414,7 @@ let editingCheckinId = null;
 
 let session = loadSession();
 let activeBrewery = '';
+let activeBreweryFull = '';
 let lastFindStats = null;
 /** @type {{ gid: string, bidx: number } | null} */
 let editingDetail = null;
@@ -1632,12 +1724,13 @@ function pickBrewerySuggest(name) {
   suppressBreweryChange = true;
   breweryField.value = brewery;
   activeBrewery = brewery;
+  activeBreweryFull = breweryFullFromInput(name) || libraryBreweryFull(brewery) || '';
   breweryShelfOpen = false;
   hideSuggest(brewerySuggest);
   syncBreweryChip();
   beerField.focus();
   refreshBeerSuggest();
-  queuePromise.resolve().then(() => { suppressBreweryChange = false; });
+  Promise.resolve().then(() => { suppressBreweryChange = false; });
 }
 
 function pickBeerSuggest(raw) {
@@ -1647,8 +1740,10 @@ function pickBeerSuggest(raw) {
   const brewery = typeof payload === 'object' ? String(payload.brewery || '') : '';
   if (!beer) return;
   if (brewery && !activeBrewery) {
-    breweryField.value = shortBreweryName(brewery);
-    activeBrewery = shortBreweryName(brewery);
+    const short = shortBreweryName(brewery);
+    breweryField.value = short;
+    activeBrewery = short;
+    activeBreweryFull = breweryFullFromInput(brewery) || libraryBreweryFull(short) || '';
     syncBreweryChip();
   }
   beerField.value = beer;
@@ -1676,13 +1771,23 @@ function syncBreweryChip() {
   updateBeerMatchHint();
 }
 
-function ensureGroup(brewery) {
+function ensureGroup(brewery, breweryFull) {
   const name = shortBreweryName(brewery.trim());
+  const full = String(breweryFull || breweryFullFromInput(brewery) || '').trim();
   let group = session.groups.find((g) => normalizeBreweryText(g.brewery) === normalizeBreweryText(name));
   if (!group) {
-    group = { id: `g-${Date.now()}`, brewery: name, collapsed: false, beers: [] };
+    group = {
+      id: `g-${Date.now()}`,
+      brewery: name,
+      breweryFull: full || undefined,
+      collapsed: false,
+      beers: [],
+    };
     session.groups.unshift(group);
   } else {
+    if (full && (!group.breweryFull || full.length > String(group.breweryFull).length)) {
+      group.breweryFull = full;
+    }
     session.groups = [group, ...session.groups.filter((g) => g !== group)];
   }
   saveSession(session);
@@ -1747,7 +1852,7 @@ function updateFindStats() {
 
 function searchLinkHtml(brewery, beer) {
   const href = escapeHtml(untappdSearchHref(brewery, beer));
-  return `<a class="untappd-search-link" href="${href}" target="_blank" rel="noopener noreferrer">${U_MARK}<span>Search Untappd</span></a>`;
+  return `<a class="untappd-search-link" href="${href}" target="_blank" rel="noopener noreferrer" data-brewery="${escapeHtml(brewery)}" data-beer="${escapeHtml(beer)}">${U_MARK}<span>Search Untappd</span></a>`;
 }
 
 function fixPanelHtml(groupId, idx) {
@@ -1764,7 +1869,7 @@ function fixPanelHtml(groupId, idx) {
 
 function rowActionsHtml(group, row, idx, opts = {}) {
   const bits = [];
-  if (opts.search) bits.push(searchLinkHtml(group.brewery, row.beer));
+  if (opts.search) bits.push(searchLinkHtml(resolveBreweryQuery(group), row.beer));
   if (opts.retry) {
     bits.push(`<button type="button" class="retry-btn" data-g="${escapeHtml(group.id)}" data-b="${idx}">Retry</button>`);
   }
@@ -1811,7 +1916,10 @@ function applyCanonicalBrewery(group, title) {
   const oldName = group.brewery;
   group.breweryFull = full;
   if (normalizeBreweryText(oldName) === normalizeBreweryText(canonical) && oldName === canonical) {
-    touchBreweryHistory(canonical);
+    touchBreweryHistory(canonical, full);
+    if (normalizeBreweryText(activeBrewery) === normalizeBreweryText(canonical)) {
+      activeBreweryFull = full;
+    }
     return;
   }
 
@@ -1823,16 +1931,20 @@ function applyCanonicalBrewery(group, title) {
     session.groups = session.groups.filter((g) => g !== group);
     other.brewery = canonical;
     other.breweryFull = full;
-    if (normalizeBreweryText(activeBrewery) === normalizeBreweryText(oldName)) activeBrewery = canonical;
-    touchBreweryHistory(canonical);
+    if (normalizeBreweryText(activeBrewery) === normalizeBreweryText(oldName)) {
+      activeBrewery = canonical;
+      activeBreweryFull = full;
+    }
+    touchBreweryHistory(canonical, full);
     return other;
   }
 
   group.brewery = canonical;
   if (normalizeBreweryText(activeBrewery) === normalizeBreweryText(oldName)) {
     activeBrewery = canonical;
+    activeBreweryFull = full;
   }
-  touchBreweryHistory(canonical);
+  touchBreweryHistory(canonical, full);
   return group;
 }
 
@@ -1932,17 +2044,20 @@ function renderSession() {
   }).join('');
 }
 
-function addBeerToList(brewery, beer) {
-  const bName = shortBreweryName(brewery.trim());
+function addBeerToList(brewery, beer, breweryFull) {
+  const raw = String(brewery || '').trim();
+  const bName = shortBreweryName(raw);
   const beerName = beer.trim();
   if (!bName || !beerName) {
     setHint(entryStatus, 'Enter a brewery and beer name.', 'error');
     return false;
   }
+  const full = String(breweryFull || breweryFullFromInput(raw) || libraryBreweryFull(bName) || '').trim();
 
   activeBrewery = bName;
-  touchBreweryHistory(bName);
-  const group = ensureGroup(bName);
+  activeBreweryFull = full || activeBreweryFull || '';
+  touchBreweryHistory(bName, full || activeBreweryFull);
+  const group = ensureGroup(bName, full || activeBreweryFull);
   const dup = group.beers.find(
     (r) => normalizeMatchText(r.beer) === normalizeMatchText(beerName) && (r.status || 'pending') === 'pending'
   );
@@ -2145,13 +2260,14 @@ async function findPendingLinks() {
 
     if (needSearch.length) {
       const batch = await resolveBeerBatch(
-        needSearch.map((j) => ({ brewery: j.group.brewery, beer: j.row.beer })),
+        needSearch.map((j) => ({ brewery: resolveBreweryQuery(j.group), beer: j.row.beer })),
         loadSettings()
       );
       const byKey = new Map(
         (batch.results || []).map((r) => [`${normalizeBreweryText(r.brewery)}|${normalizeMatchText(r.beer)}`, r])
       );
       for (const j of needSearch) {
+        // Short display names and "… Brewing Company" share a normalize key.
         const key = `${normalizeBreweryText(j.group.brewery)}|${normalizeMatchText(j.row.beer)}`;
         const result = byKey.get(key);
         if (!result || result.error) {
@@ -2212,9 +2328,10 @@ async function retryBeer(gid, bidx) {
   renderDetailIfOpen();
   setHint(detailStatus || entryStatus, `Retrying ${found.row.beer}…`);
   try {
+    const breweryQ = resolveBreweryQuery(found.group);
     const exported = resultFromLibrary(found.group.brewery, found.row.beer);
     const result = exported
-      || await resolveBeer(found.group.brewery, found.row.beer, loadSettings(), { bypassCache: true });
+      || await resolveBeer(breweryQ, found.row.beer, loadSettings(), { bypassCache: true });
     applyResolvedRow(found.row, result, found.group);
     if (exported) {
       found.row.source = 'export';
@@ -2283,7 +2400,13 @@ function applyManualUrl(gid, bidx, urlInput) {
 }
 
 function tryAddFromFields() {
-  const brewery = shortBreweryName(activeBrewery || breweryField.value);
+  const raw = String(activeBrewery || breweryField.value || '').trim();
+  const brewery = shortBreweryName(raw);
+  const full = activeBreweryFull
+    || breweryFullFromInput(breweryField.value)
+    || breweryFullFromInput(raw)
+    || libraryBreweryFull(brewery)
+    || '';
   const beer = beerField.value.trim();
   if (!brewery) {
     setHint(entryStatus, 'Set a brewery first.', 'error');
@@ -2299,7 +2422,8 @@ function tryAddFromFields() {
   }
   breweryField.value = brewery;
   activeBrewery = brewery;
-  if (addBeerToList(brewery, beer)) {
+  activeBreweryFull = full;
+  if (addBeerToList(brewery, beer, full)) {
     beerField.value = '';
     beerField.focus();
   }
@@ -2373,7 +2497,10 @@ function openBeerDetail(gid, bidx) {
   }
 
   detailSearch.hidden = false;
-  detailSearch.href = untappdSearchHref(group.brewery, row.beer);
+  const searchBrewery = resolveBreweryQuery(group);
+  detailSearch.href = untappdSearchHref(searchBrewery, row.beer);
+  detailSearch.dataset.brewery = searchBrewery;
+  detailSearch.dataset.beer = row.beer;
   detailSearch.innerHTML = `${U_MARK}<span>Search Untappd</span>`;
 
   detailFixWrap.hidden = true;
@@ -2428,6 +2555,7 @@ findLinksBtn.addEventListener('click', () => { findPendingLinks(); });
 
 newBrewerBtn.addEventListener('click', () => {
   activeBrewery = '';
+  activeBreweryFull = '';
   breweryShelfOpen = false;
   breweryField.value = '';
   beerField.value = '';
@@ -2438,7 +2566,7 @@ newBrewerBtn.addEventListener('click', () => {
 });
 
 breweryChip.addEventListener('click', () => {
-  breweryField.value = activeBrewery;
+  breweryField.value = activeBreweryFull || activeBrewery;
   breweryChipRow.hidden = true;
   breweryFieldWrap.hidden = false;
   breweryField.focus();
@@ -2447,6 +2575,7 @@ breweryChip.addEventListener('click', () => {
 
 breweryField.addEventListener('input', () => {
   activeBrewery = '';
+  activeBreweryFull = '';
   refreshBrewerySuggest();
 });
 
@@ -2458,7 +2587,9 @@ breweryField.addEventListener('keydown', (e) => {
       pickBrewerySuggest(first.getAttribute('data-value'));
       return;
     }
-    activeBrewery = shortBreweryName(breweryField.value);
+    const raw = breweryField.value;
+    activeBreweryFull = breweryFullFromInput(raw) || libraryBreweryFull(shortBreweryName(raw)) || '';
+    activeBrewery = shortBreweryName(raw);
     breweryField.value = activeBrewery;
     syncBreweryChip();
     beerField.focus();
@@ -2469,8 +2600,10 @@ breweryField.addEventListener('change', () => {
   // Chip pointerdown can still blur→change on some browsers; don't commit
   // the half-typed value over a pending suggest pick.
   if (suppressBreweryChange) return;
-  const v = shortBreweryName(breweryField.value);
+  const raw = breweryField.value;
+  const v = shortBreweryName(raw);
   if (v) {
+    activeBreweryFull = breweryFullFromInput(raw) || libraryBreweryFull(v) || '';
     breweryField.value = v;
     activeBrewery = v;
     syncBreweryChip();
@@ -2630,6 +2763,24 @@ breweryBrowseQueue?.addEventListener('click', () => {
 });
 checkinLocateBtn?.addEventListener('click', () => locateCheckinVenue());
 checkinVenue?.addEventListener('change', () => maybeSuggestBreweryFromVenue());
+
+detailSearch?.addEventListener('click', (e) => {
+  e.preventDefault();
+  const brewery = detailSearch.dataset.brewery || '';
+  const beer = detailSearch.dataset.beer || detailBeer?.value || '';
+  openUntappdSearch(brewery, beer, detailStatus || entryStatus);
+});
+
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('a.untappd-search-link');
+  if (!link || link.id === 'detail-search') return;
+  e.preventDefault();
+  openUntappdSearch(
+    link.dataset.brewery || '',
+    link.dataset.beer || '',
+    detailStatus || entryStatus
+  );
+});
 
 detailDoneBtn?.addEventListener('click', () => closeBeerDetail());
 detailRetryBtn?.addEventListener('click', () => {
@@ -3707,6 +3858,7 @@ function queueBreweryFromBrowse(name) {
   const brewery = shortBreweryName(name);
   if (!brewery) return;
   activeBrewery = brewery;
+  activeBreweryFull = breweryFullFromInput(name) || libraryBreweryFull(brewery) || '';
   breweryField.value = brewery;
   breweryShelfOpen = true;
   syncBreweryChip();

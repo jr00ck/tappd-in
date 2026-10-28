@@ -28,10 +28,10 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.9.1-beta with chip + find UI', () => {
+test('boots as v0.9.2-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.9.1-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.9.2-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-suggest'));
   assert.ok(d.getElementById('nav-trends'));
@@ -54,11 +54,34 @@ test('shortBreweryName + history migrate collapses North Park dupes', () => {
     ]));
   });
   assert.equal(w.TappdIn.shortBreweryName('North Park Beer Company'), 'North Park');
+  assert.equal(w.TappdIn.breweryFullFromInput('North Park Beer Company'), 'North Park Beer Company');
+  assert.equal(w.TappdIn.breweryFullFromInput('North Park'), '');
   w.TappdIn.migrateBreweryHistory();
   const hist = JSON.parse(w.localStorage.getItem('tappd-in.breweryHistory'));
   assert.equal(hist.length, 1);
   assert.equal(hist[0].name, 'North Park');
+  assert.equal(hist[0].fullName, 'North Park Beer Company');
   assert.equal(hist[0].count, 3);
+});
+
+test('queued brewery keeps full name for resolve/search while UI stays short', () => {
+  const { d, w } = boot();
+  d.getElementById('brewery-field').value = 'Mortalis Brewing Company';
+  d.getElementById('brewery-field').dispatchEvent(new w.Event('change', { bubbles: true }));
+  assert.equal(d.getElementById('brewery-chip').textContent, 'Mortalis');
+  d.getElementById('beer-field').value = 'Strange Philosophies';
+  d.getElementById('add-beer-btn').click();
+  const session = JSON.parse(w.localStorage.getItem('tappd-in.session'));
+  assert.equal(session.groups[0].brewery, 'Mortalis');
+  assert.equal(session.groups[0].breweryFull, 'Mortalis Brewing Company');
+  assert.equal(
+    w.TappdIn.resolveBreweryQuery(session.groups[0]),
+    'Mortalis Brewing Company'
+  );
+  assert.match(
+    w.TappdIn.untappdSearchWebUrl('Mortalis Brewing Company', 'Strange Philosophies'),
+    /Mortalis\+Brewing\+Company/
+  );
 });
 
 test('import checkins CSV marks Had and resolves Lupulin from export', () => {

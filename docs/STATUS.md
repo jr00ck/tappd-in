@@ -1,9 +1,15 @@
 # Tappd In — status
 
-**Version:** 0.9.1-beta  
+**Version:** 0.9.2-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
 **Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
-**Updated:** 2026-10-21
+**Updated:** 2026-10-27
+
+## What changed (0.9.2)
+
+- **Find links** — keeps full brewery names (“Brewing Company”, etc.) for Untappd search while the UI stays short
+- **Bare brewery queries** — resolve also tries common suffixes when you only typed the short name
+- **Search Untappd** — prefers the Untappd app (Android intent / iOS copy + open) instead of an in-app browser
 
 ## What changed (0.9.1)
 
