@@ -4,7 +4,7 @@ All notable changes to Tappd In are listed here.
 Generated with [git-cliff](https://git-cliff.org); keep commits conventional when you can.
 
 <!-- git-cliff: end of header -->
-## [unreleased]
+## [0.9.2-beta] - 2026-10-27
 
 ### Bug Fixes
 
