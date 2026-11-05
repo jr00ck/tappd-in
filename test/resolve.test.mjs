@@ -56,6 +56,7 @@ test('buildQueryVariants returns up to 5 strings', () => {
   const q = buildQueryVariants('Finback', 'Something Mosaic');
   assert.ok(q.length >= 4 && q.length <= 5);
   assert.ok(q.some((s) => /untappd/i.test(s)));
+  assert.ok(q.some((s) => /Something Mosaic - Finback Brewing Company/i.test(s)));
 });
 
 test('bare brewery names expand with Brewing Company for search queries', () => {

@@ -28,10 +28,10 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.9.3-beta with chip + find UI', () => {
+test('boots as v0.9.4-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.9.3-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.9.4-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-suggest'));
   assert.ok(d.getElementById('nav-trends'));
@@ -354,6 +354,42 @@ test('beerOpenHref prefers https Universal Links over untappd://', () => {
     'https://untappd.com/b/foo/123'
   );
   assert.equal(w.TappdIn.beerOpenHref('', '99'), 'https://untappd.com/beer/99');
+});
+
+test('openUntappdSearch uses top-level search URL (not /home)', () => {
+  const { w } = boot();
+  const hrefs = [];
+  const original = w.location;
+  // jsdom location.href assignment — capture via defineProperty when possible
+  let assigned = '';
+  try {
+    Object.defineProperty(w, 'location', {
+      configurable: true,
+      value: {
+        ...original,
+        set href(v) { assigned = String(v); },
+        get href() { return assigned || original.href; },
+        assign(v) { assigned = String(v); },
+      },
+    });
+  } catch {
+    // Some jsdom builds freeze location; assert URL builder instead.
+  }
+  const url = w.TappdIn.untappdSearchWebUrl('Bone Haus Brewing', 'Sparkling clover');
+  assert.match(url, /untappd\.com\/search/);
+  assert.match(url, /Bone\+Haus\+Brewing/);
+  assert.match(url, /Sparkling\+clover|Sparkling%20clover/i);
+  assert.doesNotMatch(url, /\/home/);
+  if (typeof w.TappdIn.openUntappdSearch === 'function') {
+    // Force “prefer app” path without touch: monkey-patch settings via storage
+    w.localStorage.setItem('tappd-in.settings', JSON.stringify({ openInApp: true }));
+    Object.defineProperty(w.navigator, 'maxTouchPoints', { configurable: true, get: () => 5 });
+    w.TappdIn.openUntappdSearch('Bone Haus Brewing', 'Sparkling clover', null);
+    if (assigned) {
+      assert.match(assigned, /untappd\.com\/search/);
+      assert.doesNotMatch(assigned, /untappd\.com\/home/);
+    }
+  }
 });
 
 test('trends page renders check-in charts from the library', () => {

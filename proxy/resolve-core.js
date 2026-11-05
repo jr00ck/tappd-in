@@ -153,12 +153,14 @@ export function buildQueryVariants(brewery, beer) {
   // Prefer a suffixed form for title-shaped queries Untappd indexes.
   const rich = forms[1] || primary;
   // Up to 5 variants; one multi-query Search request bills as one.
+  // Include an unquoted title-shaped query — brand-new beers often miss when
+  // only the quoted "{Beer} - {Brewery}" form is tried.
   return [
     `${rich} ${beerName} untappd`,
     `${beerName} ${rich} untappd.com/b`,
+    `${beerName} - ${rich} untappd`,
     `${beerName} by ${primary}`,
-    `${beerName} ${primary} beer`,
-    `"${beerName} - ${rich}" untappd`,
+    `"${beerName}" "${primary}" untappd.com/b`,
   ].filter(Boolean).slice(0, 5);
 }
 

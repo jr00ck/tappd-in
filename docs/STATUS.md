@@ -1,9 +1,14 @@
 # Tappd In — status
 
-**Version:** 0.9.3-beta  
+**Version:** 0.9.4-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
 **Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
-**Updated:** 2026-10-28
+**Updated:** 2026-11-04
+
+## What changed (0.9.4)
+
+- **Search Untappd** — opens the filled search via Safari / Android Untappd intent (no empty app + stuck in-app browser). Untappd has no Search deep link.
+- **Find links** — extra broad web pass when `/b` index returns nothing (helps some brand-new beers)
 
 ## What changed (0.9.3)
 

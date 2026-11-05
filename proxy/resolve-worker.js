@@ -72,8 +72,17 @@ function mapPages(rows) {
 /**
  * Provider adapter — one HTTP request to Perplexity Search.
  * Multi-query array is billed as one Search request (rate-limit counts each query).
+ * Pass domainFilter: null to skip the filter (last-resort for brand-new beers).
  */
-async function perplexitySearch(apiKey, { queries, searchType, maxResults }) {
+async function perplexitySearch(apiKey, { queries, searchType, maxResults, domainFilter }) {
+  const body = {
+    query: queries.length === 1 ? queries[0] : queries,
+    search_type: searchType,
+    max_results: maxResults,
+  };
+  if (domainFilter !== null) {
+    body.search_domain_filter = domainFilter || ['untappd.com/b'];
+  }
   const res = await fetch(PERPLEXITY_SEARCH, {
     method: 'POST',
     headers: {
@@ -81,12 +90,7 @@ async function perplexitySearch(apiKey, { queries, searchType, maxResults }) {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    body: JSON.stringify({
-      query: queries.length === 1 ? queries[0] : queries,
-      search_type: searchType,
-      max_results: maxResults,
-      search_domain_filter: ['untappd.com/b'],
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
@@ -112,6 +116,7 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
   const queries = buildQueryVariants(brewery, beer);
   let providerCalls = 0;
   let pass = 'fast_multi';
+  let allQueries = [...queries];
 
   providerCalls += 1;
   let pages = await perplexityPages(apiKey, {
@@ -122,7 +127,7 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
   let body = buildResolveResponse(brewery, beer, pages, {
     pass,
     providerCalls,
-    queries,
+    queries: allQueries,
     debug,
   });
 
@@ -138,7 +143,34 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
     body = buildResolveResponse(brewery, beer, pages, {
       pass,
       providerCalls,
-      queries,
+      queries: allQueries,
+      debug,
+    });
+  }
+
+  // Brand-new Untappd beers often aren't in the /b index yet even though
+  // Untappd's own search finds them. One broader web pass (no domain filter)
+  // can still surface a /b/… URL from snippets or secondary pages.
+  if (!body.confident && !(body.candidates || []).length) {
+    pass = 'web_broad';
+    const broadQueries = [
+      `"${beer}" "${brewery}" untappd`,
+      `site:untappd.com ${beer} ${brewery}`,
+      `${beer} ${brewery} untappd.com/b`,
+    ].filter(Boolean).slice(0, 3);
+    allQueries = [...allQueries, ...broadQueries];
+    providerCalls += 1;
+    const more = await perplexityPages(apiKey, {
+      queries: broadQueries,
+      searchType: 'web',
+      maxResults: 20,
+      domainFilter: null,
+    });
+    pages = [...pages, ...more];
+    body = buildResolveResponse(brewery, beer, pages, {
+      pass,
+      providerCalls,
+      queries: allQueries,
       debug,
     });
   }
