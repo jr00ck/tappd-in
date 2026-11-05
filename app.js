@@ -13,7 +13,7 @@ const APP_VERSION = '0.9.4-beta';
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
-  'Find links uses Untappd’s own search behind the scenes when web search misses (auto-links single exact hits)',
+  'Find links uses Untappd’s own search first (auto-links exact hits); AI web search is the fallback',
   'Search Untappd opens the real search outside the in-app browser',
   'Breweries tab — search + sort by A–Z, rating, or beer count',
   'Beer details — edit brewery when a lookup missed (keeps the beer name)',

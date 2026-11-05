@@ -17,6 +17,7 @@ import {
   scoreUntappdSearchHits,
   applyUntappdSearchHits,
   isUntappdSearchConfident,
+  parseUntappdSearchConfig,
 } from '../proxy/resolve-core.js';
 
 test('cleanUntappdTitle strips Photos chrome before beer/brewery split', () => {
@@ -177,6 +178,20 @@ test('Mortalis Strange Philosophies fixture resolves confidently', () => {
   assert.match(body.best.slug, /strange-philosophies/);
   assert.equal(body.confident, true);
   assert.ok(isConfident(body.best, body.candidates[1], 'Strange Philosophies', 'Mortalis'));
+});
+
+test('parseUntappdSearchConfig reads visitor search keys from HTML', () => {
+  const html = `<script>window.UNTAPPD_SEARCH_CONFIG = ${JSON.stringify({
+    appId: 'APP123',
+    searchKey: 'key-abc',
+    indexes: { beer: { all: 'beer' } },
+  })};</script>`;
+  assert.deepEqual(parseUntappdSearchConfig(html), {
+    appId: 'APP123',
+    searchKey: 'key-abc',
+    index: 'beer',
+  });
+  assert.equal(parseUntappdSearchConfig('<html></html>'), null);
 });
 
 test('Untappd Algolia single hit auto-resolves Sparkling Clover', () => {

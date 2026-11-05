@@ -311,14 +311,31 @@ export function untappdSearchWebUrl(brewery, beer) {
 
 /**
  * Untappd’s public site search uses Algolia with a browser search-only key
- * embedded in the page (same keys the website uses). We reuse that for a
- * last-resort resolve when Perplexity hasn’t indexed a brand-new /b page yet.
+ * embedded in the page (same keys any visitor’s browser uses). Primary resolve
+ * path; Perplexity is the fallback for typos / messy OCR.
+ * Seed values are refreshed from untappd.com/search HTML when they rotate.
  */
 export const UNTAPPD_ALGOLIA = {
   appId: '9WBO4RQ3HO',
   searchKey: '1d347324d67ec472bb7132c66aead485',
   index: 'beer',
 };
+
+/** Parse `window.UNTAPPD_SEARCH_CONFIG = {…}` from Untappd search HTML. */
+export function parseUntappdSearchConfig(html) {
+  const m = String(html || '').match(/window\.UNTAPPD_SEARCH_CONFIG\s*=\s*(\{[\s\S]*?\});/);
+  if (!m) return null;
+  try {
+    const cfg = JSON.parse(m[1]);
+    const appId = String(cfg.appId || '').trim();
+    const searchKey = String(cfg.searchKey || '').trim();
+    const index = String(cfg.indexes?.beer?.all || 'beer').trim() || 'beer';
+    if (!appId || !searchKey) return null;
+    return { appId, searchKey, index };
+  } catch {
+    return null;
+  }
+}
 
 /** Map an Untappd Algolia beer hit → /b/{slug}/{id} candidate fields. */
 export function untappdUrlFromAlgoliaHit(hit) {
