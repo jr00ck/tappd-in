@@ -153,12 +153,14 @@ export function buildQueryVariants(brewery, beer) {
   // Prefer a suffixed form for title-shaped queries Untappd indexes.
   const rich = forms[1] || primary;
   // Up to 5 variants; one multi-query Search request bills as one.
+  // Include an unquoted title-shaped query — brand-new beers often miss when
+  // only the quoted "{Beer} - {Brewery}" form is tried.
   return [
     `${rich} ${beerName} untappd`,
     `${beerName} ${rich} untappd.com/b`,
+    `${beerName} - ${rich} untappd`,
     `${beerName} by ${primary}`,
-    `${beerName} ${primary} beer`,
-    `"${beerName} - ${rich}" untappd`,
+    `"${beerName}" "${primary}" untappd.com/b`,
   ].filter(Boolean).slice(0, 5);
 }
 
@@ -305,6 +307,129 @@ export function untappdSearchWebUrl(brewery, beer) {
   url.searchParams.set('q', q);
   url.searchParams.set('type', 'beer');
   return url.href;
+}
+
+/**
+ * Untappd’s public site search uses Algolia with a browser search-only key
+ * embedded in the page (same keys any visitor’s browser uses). Primary resolve
+ * path; Perplexity is the fallback for typos / messy OCR.
+ * Seed values are refreshed from untappd.com/search HTML when they rotate.
+ */
+export const UNTAPPD_ALGOLIA = {
+  appId: '9WBO4RQ3HO',
+  searchKey: '1d347324d67ec472bb7132c66aead485',
+  index: 'beer',
+};
+
+/** Parse `window.UNTAPPD_SEARCH_CONFIG = {…}` from Untappd search HTML. */
+export function parseUntappdSearchConfig(html) {
+  const m = String(html || '').match(/window\.UNTAPPD_SEARCH_CONFIG\s*=\s*(\{[\s\S]*?\});/);
+  if (!m) return null;
+  try {
+    const cfg = JSON.parse(m[1]);
+    const appId = String(cfg.appId || '').trim();
+    const searchKey = String(cfg.searchKey || '').trim();
+    const index = String(cfg.indexes?.beer?.all || 'beer').trim() || 'beer';
+    if (!appId || !searchKey) return null;
+    return { appId, searchKey, index };
+  } catch {
+    return null;
+  }
+}
+
+/** Map an Untappd Algolia beer hit → /b/{slug}/{id} candidate fields. */
+export function untappdUrlFromAlgoliaHit(hit) {
+  if (!hit || typeof hit !== 'object') return null;
+  const slug = String(hit.beer_slug || '').toLowerCase().trim();
+  const id = String(hit.bid || hit.objectID || '').trim();
+  const beerName = String(hit.beer_name || '').trim();
+  const breweryName = String(hit.brewery_name || '').trim();
+  if (!slug || !id || !/^\d+$/.test(id)) return null;
+  return {
+    slug,
+    id,
+    url: `https://untappd.com/b/${slug}/${id}`,
+    title: beerName && breweryName ? `${beerName} - ${breweryName}` : (beerName || slug),
+    beerName,
+    breweryName,
+  };
+}
+
+/**
+ * Score Algolia hits with the same matcher as Perplexity pages.
+ * A single Untappd search hit that covers brewery + beer is treated as confident
+ * (matches the common “Search Untappd shows exactly one result” case).
+ */
+export function scoreUntappdSearchHits(brewery, beer, hits) {
+  const scored = [];
+  for (const hit of hits || []) {
+    const parsed = untappdUrlFromAlgoliaHit(hit);
+    if (!parsed) continue;
+    const score = scoreCandidate(brewery, beer, parsed, parsed.title);
+    if (score <= 0) continue;
+    scored.push({
+      url: parsed.url,
+      id: parsed.id,
+      slug: parsed.slug,
+      title: parsed.title,
+      score: Math.round(score * 1000) / 1000,
+      source: 'untappd_search',
+    });
+  }
+  scored.sort((a, b) => b.score - a.score || a.slug.length - b.slug.length);
+  return scored;
+}
+
+export function isUntappdSearchConfident(best, second, beer, brewery, hitCount) {
+  if (!best) return false;
+  if (isConfident(best, second, beer, brewery)) return true;
+  // One Untappd search result that already matched brewery+beer tokens.
+  if (hitCount === 1 && best.score >= 0.55) return true;
+  return false;
+}
+
+/** Merge Untappd search hits into an existing resolve body (miss recovery). */
+export function applyUntappdSearchHits(body, brewery, beer, hits, extras = {}) {
+  const scored = scoreUntappdSearchHits(brewery, beer, hits);
+  if (!scored.length) {
+    return {
+      ...body,
+      pass: extras.pass || body.pass || 'untappd_search',
+      providerCalls: extras.providerCalls != null ? extras.providerCalls : body.providerCalls,
+      meta: {
+        ...(body.meta || {}),
+        untappdSearchHits: (hits || []).length,
+        untappdSearchMatched: 0,
+      },
+    };
+  }
+
+  const byId = new Map();
+  for (const c of body.candidates || []) byId.set(c.id, c);
+  for (const c of scored) {
+    const prev = byId.get(c.id);
+    if (!prev || c.score > prev.score) byId.set(c.id, c);
+  }
+  const merged = [...byId.values()].sort((a, b) => b.score - a.score || a.slug.length - b.slug.length);
+  const best = merged[0] || null;
+  const second = merged[1];
+  const confident = isUntappdSearchConfident(best, second, beer, brewery, scored.length)
+    || isConfident(best, second, beer, brewery);
+
+  return {
+    ...body,
+    best,
+    candidates: merged.slice(0, 5),
+    confident,
+    pass: extras.pass || 'untappd_search',
+    providerCalls: extras.providerCalls != null ? extras.providerCalls : body.providerCalls,
+    untappdSearchUrl: body.untappdSearchUrl || untappdSearchWebUrl(brewery, beer),
+    meta: {
+      ...(body.meta || {}),
+      untappdSearchHits: (hits || []).length,
+      untappdSearchMatched: scored.length,
+    },
+  };
 }
 
 /** Flatten single- or multi-query Perplexity `results`. */

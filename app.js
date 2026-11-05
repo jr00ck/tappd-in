@@ -7,16 +7,16 @@ const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 const LIBRARY_KEY = 'tappd-in.beerLibrary';
 
-const APP_VERSION = '0.9.3-beta';
+const APP_VERSION = '0.9.4-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
+  'Find links uses Untappd’s own search first (auto-links exact hits); AI web search is the fallback',
+  'Search Untappd opens the real search outside the in-app browser',
   'Breweries tab — search + sort by A–Z, rating, or beer count',
   'Beer details — edit brewery when a lookup missed (keeps the beer name)',
-  'Open in Untappd uses https Universal Links so warm-start still opens the beer',
-  'Find links keeps “Brewing Company” for Untappd search — display stays short',
 ];
 
 const BREWERY_BROWSE_SORTS = new Set(['name', 'rating', 'beers']);
@@ -265,15 +265,20 @@ function openUntappdBeer(httpsUrl, beerId) {
 
 /**
  * Untappd has no public search:// deep link, and /search is not a Universal Link.
- * Keep https as the href; openUntappdSearch() prefers the native app on tap.
+ * Keep https as the href; openUntappdSearch() leaves the PWA (not in-app browser).
  */
 function untappdSearchHref(brewery, beer) {
   return untappdSearchWebUrl(brewery, beer);
 }
 
 /**
- * Open Untappd search in the native app when possible (avoids in-app browser).
- * Android: intent → Untappd package. iOS: copy query + open app via /home UL.
+ * Open Untappd’s beer search with the query filled in.
+ * Untappd does not expose a search deep link, so we cannot land on Search inside
+ * the app the way we can for beer pages. Instead:
+ * - Android: hand the https search URL to the Untappd package (App Links / intent)
+ * - iOS / other: top-level navigation to the search URL (leaves the PWA into Safari,
+ *   not the in-app browser). Opening /home only launched Untappd with an empty
+ *   Search tab and left the real results stuck in the PWA browser.
  */
 function openUntappdSearch(brewery, beer, statusEl) {
   const web = untappdSearchWebUrl(brewery, beer);
@@ -285,32 +290,12 @@ function openUntappdSearch(brewery, beer, statusEl) {
   if (isAndroidUa()) {
     const hostPath = `untappd.com/search?q=${encodeURIComponent(q)}&type=beer`;
     const fallback = encodeURIComponent(web);
+    if (statusEl) setHint(statusEl, 'Opening Untappd search…', 'ok');
     location.href = `intent://${hostPath}#Intent;scheme=https;package=com.untappdllc.app;S.browser_fallback_url=${fallback};end`;
     return;
   }
-  // iOS: /search is not in apple-app-site-association. Copy the query and open
-  // Untappd via /home (which is). Fall back to Safari search if the app didn’t open.
-  const done = () => {
-    if (statusEl) setHint(statusEl, 'Search copied — paste it in Untappd.', 'ok');
-    const started = Date.now();
-    const fallbackTimer = setTimeout(() => {
-      if (document.visibilityState === 'visible' && Date.now() - started >= 700) {
-        location.href = web;
-      }
-    }, 850);
-    const cancel = () => clearTimeout(fallbackTimer);
-    window.addEventListener('pagehide', cancel, { once: true });
-    window.addEventListener('blur', cancel, { once: true });
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') cancel();
-    }, { once: true });
-    location.href = 'https://untappd.com/home';
-  };
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(q).then(done, done);
-  } else {
-    done();
-  }
+  if (statusEl) setHint(statusEl, 'Opening Untappd search in Safari…', 'ok');
+  location.href = web;
 }
 
 const U_MARK = '<span class="u-mark" aria-hidden="true">U</span>';

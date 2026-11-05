@@ -1,9 +1,14 @@
 # Tappd In — status
 
-**Version:** 0.9.3-beta  
+**Version:** 0.9.4-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
 **Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
-**Updated:** 2026-10-28
+**Updated:** 2026-11-04
+
+## What changed (0.9.4)
+
+- **Find links** — Untappd’s own Algolia beer search first (same index as Search Untappd); auto-links exact / single hits. Perplexity is fallback for typos. Algolia keys refresh from untappd.com/search HTML if they rotate.
+- **Search Untappd** — opens the filled search outside the in-app browser (Safari / Android Untappd intent). Untappd has no Search deep link.
 
 ## What changed (0.9.3)
 
