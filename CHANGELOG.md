@@ -4,6 +4,16 @@ All notable changes to Tappd In are listed here.
 Generated with [git-cliff](https://git-cliff.org); keep commits conventional when you can.
 
 <!-- git-cliff: end of header -->
+## [0.9.4-beta] - 2026-11-04
+
+### Features
+
+- Find links uses Untappd Algolia search first; Perplexity is the fallback
+- Auto-link single exact Untappd search hits; refresh Algolia keys from site HTML
+
+### Bug Fixes
+
+- Search Untappd opens the real search outside the in-app browser
 ## [0.9.3-beta] - 2026-10-28
 
 ### Features
