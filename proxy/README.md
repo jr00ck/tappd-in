@@ -20,7 +20,7 @@ Unused (Catalog.beer parked — delete later if desired, not required for MVP):
 
 `GET /resolve?brewery=Finback&beer=Something+Mosaic`
 
-`POST /resolve-batch` with `{ "items": [{ "brewery", "beer" }, ...] }` — up to 5 beers per billed Search call (per-query result groups), web pass for unconfident, multi-variant fallback only for empty-candidate misses.
+`POST /resolve-batch` with `{ "items": [{ "brewery", "beer" }, ...] }` — up to 5 beers per billed Search call (per-query result groups), web pass for unconfident, multi-variant fallback for empty-candidate misses, then Untappd Algolia search (same index as untappd.com/search) when still unconfident.
 
 Deployed:
 

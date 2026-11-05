@@ -13,6 +13,8 @@
  */
 
 import {
+  UNTAPPD_ALGOLIA,
+  applyUntappdSearchHits,
   buildBatchQuery,
   buildQueryVariants,
   buildResolveResponse,
@@ -148,36 +150,50 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
     });
   }
 
-  // Brand-new Untappd beers often aren't in the /b index yet even though
-  // Untappd's own search finds them. One broader web pass (no domain filter)
-  // can still surface a /b/… URL from snippets or secondary pages.
-  if (!body.confident && !(body.candidates || []).length) {
-    pass = 'web_broad';
-    const broadQueries = [
-      `"${beer}" "${brewery}" untappd`,
-      `site:untappd.com ${beer} ${brewery}`,
-      `${beer} ${brewery} untappd.com/b`,
-    ].filter(Boolean).slice(0, 3);
-    allQueries = [...allQueries, ...broadQueries];
-    providerCalls += 1;
-    const more = await perplexityPages(apiKey, {
-      queries: broadQueries,
-      searchType: 'web',
-      maxResults: 20,
-      domainFilter: null,
-    });
-    pages = [...pages, ...more];
-    body = buildResolveResponse(brewery, beer, pages, {
+  // Brand-new Untappd beers often aren't in Perplexity’s /b index yet even
+  // though Untappd’s own Algolia search finds them (often as a single hit).
+  if (!body.confident) {
+    pass = 'untappd_search';
+    const q = `${brewery} ${beer}`.trim();
+    allQueries = [...allQueries, `untappd-algolia:${q}`];
+    const hits = await algoliaBeerSearch(q, { hitsPerPage: 8 });
+    body = applyUntappdSearchHits(body, brewery, beer, hits, {
       pass,
       providerCalls,
-      queries: allQueries,
-      debug,
     });
   }
 
   body.pass = pass;
   body.providerCalls = providerCalls;
   return body;
+}
+
+/** Same public Algolia search Untappd.com uses for beer search. */
+async function algoliaBeerSearch(query, { hitsPerPage = 8 } = {}) {
+  const q = String(query || '').trim();
+  if (!q) return [];
+  const endpoint = `https://${UNTAPPD_ALGOLIA.appId}-dsn.algolia.net/1/indexes/${UNTAPPD_ALGOLIA.index}/query`;
+  const params = new URLSearchParams({
+    query: q,
+    hitsPerPage: String(hitsPerPage),
+  });
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'X-Algolia-Application-Id': UNTAPPD_ALGOLIA.appId,
+        'X-Algolia-API-Key': UNTAPPD_ALGOLIA.searchKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ params: params.toString() }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.hits) ? data.hits : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -254,6 +270,22 @@ async function resolveBatch(apiKey, items, debug) {
     providerCalls += body.providerCalls || 0;
     results[idx].body = body;
     results[idx].pages = [];
+  }
+
+  // Untappd’s own Algolia search for any remaining unconfident rows (no Perplexity).
+  const needAlgolia = results
+    .map((r, i) => (r.body && !r.body.confident && r.body.pass !== 'untappd_search' ? i : -1))
+    .filter((i) => i >= 0);
+  for (const idx of needAlgolia) {
+    const q = `${items[idx].brewery} ${items[idx].beer}`.trim();
+    const hits = await algoliaBeerSearch(q, { hitsPerPage: 8 });
+    results[idx].body = applyUntappdSearchHits(
+      results[idx].body,
+      items[idx].brewery,
+      items[idx].beer,
+      hits,
+      { pass: 'untappd_search', providerCalls }
+    );
   }
 
   return {

@@ -309,6 +309,112 @@ export function untappdSearchWebUrl(brewery, beer) {
   return url.href;
 }
 
+/**
+ * Untappd’s public site search uses Algolia with a browser search-only key
+ * embedded in the page (same keys the website uses). We reuse that for a
+ * last-resort resolve when Perplexity hasn’t indexed a brand-new /b page yet.
+ */
+export const UNTAPPD_ALGOLIA = {
+  appId: '9WBO4RQ3HO',
+  searchKey: '1d347324d67ec472bb7132c66aead485',
+  index: 'beer',
+};
+
+/** Map an Untappd Algolia beer hit → /b/{slug}/{id} candidate fields. */
+export function untappdUrlFromAlgoliaHit(hit) {
+  if (!hit || typeof hit !== 'object') return null;
+  const slug = String(hit.beer_slug || '').toLowerCase().trim();
+  const id = String(hit.bid || hit.objectID || '').trim();
+  const beerName = String(hit.beer_name || '').trim();
+  const breweryName = String(hit.brewery_name || '').trim();
+  if (!slug || !id || !/^\d+$/.test(id)) return null;
+  return {
+    slug,
+    id,
+    url: `https://untappd.com/b/${slug}/${id}`,
+    title: beerName && breweryName ? `${beerName} - ${breweryName}` : (beerName || slug),
+    beerName,
+    breweryName,
+  };
+}
+
+/**
+ * Score Algolia hits with the same matcher as Perplexity pages.
+ * A single Untappd search hit that covers brewery + beer is treated as confident
+ * (matches the common “Search Untappd shows exactly one result” case).
+ */
+export function scoreUntappdSearchHits(brewery, beer, hits) {
+  const scored = [];
+  for (const hit of hits || []) {
+    const parsed = untappdUrlFromAlgoliaHit(hit);
+    if (!parsed) continue;
+    const score = scoreCandidate(brewery, beer, parsed, parsed.title);
+    if (score <= 0) continue;
+    scored.push({
+      url: parsed.url,
+      id: parsed.id,
+      slug: parsed.slug,
+      title: parsed.title,
+      score: Math.round(score * 1000) / 1000,
+      source: 'untappd_search',
+    });
+  }
+  scored.sort((a, b) => b.score - a.score || a.slug.length - b.slug.length);
+  return scored;
+}
+
+export function isUntappdSearchConfident(best, second, beer, brewery, hitCount) {
+  if (!best) return false;
+  if (isConfident(best, second, beer, brewery)) return true;
+  // One Untappd search result that already matched brewery+beer tokens.
+  if (hitCount === 1 && best.score >= 0.55) return true;
+  return false;
+}
+
+/** Merge Untappd search hits into an existing resolve body (miss recovery). */
+export function applyUntappdSearchHits(body, brewery, beer, hits, extras = {}) {
+  const scored = scoreUntappdSearchHits(brewery, beer, hits);
+  if (!scored.length) {
+    return {
+      ...body,
+      pass: extras.pass || body.pass || 'untappd_search',
+      providerCalls: extras.providerCalls != null ? extras.providerCalls : body.providerCalls,
+      meta: {
+        ...(body.meta || {}),
+        untappdSearchHits: (hits || []).length,
+        untappdSearchMatched: 0,
+      },
+    };
+  }
+
+  const byId = new Map();
+  for (const c of body.candidates || []) byId.set(c.id, c);
+  for (const c of scored) {
+    const prev = byId.get(c.id);
+    if (!prev || c.score > prev.score) byId.set(c.id, c);
+  }
+  const merged = [...byId.values()].sort((a, b) => b.score - a.score || a.slug.length - b.slug.length);
+  const best = merged[0] || null;
+  const second = merged[1];
+  const confident = isUntappdSearchConfident(best, second, beer, brewery, scored.length)
+    || isConfident(best, second, beer, brewery);
+
+  return {
+    ...body,
+    best,
+    candidates: merged.slice(0, 5),
+    confident,
+    pass: extras.pass || 'untappd_search',
+    providerCalls: extras.providerCalls != null ? extras.providerCalls : body.providerCalls,
+    untappdSearchUrl: body.untappdSearchUrl || untappdSearchWebUrl(brewery, beer),
+    meta: {
+      ...(body.meta || {}),
+      untappdSearchHits: (hits || []).length,
+      untappdSearchMatched: scored.length,
+    },
+  };
+}
+
 /** Flatten single- or multi-query Perplexity `results`. */
 export function flattenProviderResults(payload) {
   const r = payload && payload.results;

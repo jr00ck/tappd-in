@@ -13,6 +13,10 @@ import {
   isConfident,
   cleanUntappdTitle,
   parseTitleParts,
+  untappdUrlFromAlgoliaHit,
+  scoreUntappdSearchHits,
+  applyUntappdSearchHits,
+  isUntappdSearchConfident,
 } from '../proxy/resolve-core.js';
 
 test('cleanUntappdTitle strips Photos chrome before beer/brewery split', () => {
@@ -173,6 +177,31 @@ test('Mortalis Strange Philosophies fixture resolves confidently', () => {
   assert.match(body.best.slug, /strange-philosophies/);
   assert.equal(body.confident, true);
   assert.ok(isConfident(body.best, body.candidates[1], 'Strange Philosophies', 'Mortalis'));
+});
+
+test('Untappd Algolia single hit auto-resolves Sparkling Clover', () => {
+  const hit = {
+    bid: 6799790,
+    beer_name: 'Sparkling Clover',
+    brewery_name: 'Bone Haus Brewing',
+    beer_slug: 'bone-haus-brewing-sparkling-clover',
+    objectID: '6799790',
+  };
+  const parsed = untappdUrlFromAlgoliaHit(hit);
+  assert.equal(parsed.url, 'https://untappd.com/b/bone-haus-brewing-sparkling-clover/6799790');
+  const scored = scoreUntappdSearchHits('Bone Haus Brewing', 'Sparkling clover', [hit]);
+  assert.equal(scored.length, 1);
+  assert.ok(scored[0].score >= 0.72);
+  assert.equal(
+    isUntappdSearchConfident(scored[0], null, 'Sparkling clover', 'Bone Haus Brewing', 1),
+    true
+  );
+  const miss = buildResolveResponse('Bone Haus Brewing', 'Sparkling clover', []);
+  assert.equal(miss.confident, false);
+  const recovered = applyUntappdSearchHits(miss, 'Bone Haus Brewing', 'Sparkling clover', [hit]);
+  assert.equal(recovered.confident, true);
+  assert.equal(recovered.best.id, '6799790');
+  assert.equal(recovered.pass, 'untappd_search');
 });
 
 test('North Park X-Raying Rakau / racau typo beats Nelson look-alike', () => {

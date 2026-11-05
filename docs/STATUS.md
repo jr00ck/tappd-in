@@ -7,8 +7,8 @@
 
 ## What changed (0.9.4)
 
-- **Search Untappd** — opens the filled search via Safari / Android Untappd intent (no empty app + stuck in-app browser). Untappd has no Search deep link.
-- **Find links** — extra broad web pass when `/b` index returns nothing (helps some brand-new beers)
+- **Find links** — when web search misses, queries Untappd’s own Algolia beer search (same as Search Untappd) and auto-links a single exact hit
+- **Search Untappd** — opens the filled search outside the in-app browser (Safari / Android Untappd intent). Untappd has no Search deep link.
 
 ## What changed (0.9.3)
 
