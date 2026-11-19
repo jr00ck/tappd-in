@@ -1,9 +1,14 @@
 # Tappd In — status
 
-**Version:** 0.9.5-beta  
+**Version:** 0.9.6-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
-**Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
+**Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`, `GET /checkins?user=`)  
 **Updated:** 2026-11-18
+
+## What changed (0.9.6)
+
+- **Find links** — if Untappd search has one beer, that beer is linked. Typos and missing words no longer have to pass a separate name score.
+- **Update check-ins** — saves a profile URL on this device and asks the resolver to read the public profile. Untappd may only return the few check-ins shown before sign-in, or block the fetch. The capture bookmark is the signed-in path.
 
 ## What changed (0.9.5)
 

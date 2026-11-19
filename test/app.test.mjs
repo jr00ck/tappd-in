@@ -28,10 +28,10 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.9.5-beta with chip + find UI', () => {
+test('boots as v0.9.6-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.9.5-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.9.6-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-suggest'));
   assert.ok(d.getElementById('nav-trends'));
@@ -167,16 +167,32 @@ test('Untappd search single hit links Driving Up the Coast', () => {
   assert.equal(body.meta.untappdSearchHits, 1);
   assert.match(body.untappdSearchUrl, /Driving\+up\+the\+coast/);
 
+  const typo = w.TappdIn.buildUntappdSearchResolution('Brujos', 'Tres Maleditci', [{
+    bid: 7142831,
+    beer_name: 'Tres Maledicti',
+    brewery_name: 'Brujos Brewing',
+    beer_slug: 'brujos-brewing-tres-maledicti',
+  }], 1);
+  assert.equal(typo.confident, true);
+  assert.equal(typo.best.id, '7142831');
+  assert.equal(typo.best.url, 'https://untappd.com/b/brujos-brewing-tres-maledicti/7142831');
+
   const lookalike = {
     ...hit,
     bid: 1,
     beer_name: 'Driving Up the Coast Again',
     beer_slug: 'mikerphone-brewing-driving-up-the-coast-again',
   };
-  const weak = w.TappdIn.buildUntappdSearchResolution('mikerphone brewing', 'Driving up the coast', [lookalike], 1);
-  assert.equal(weak.confident, false);
-  assert.equal(weak.candidates.length, 0);
-  assert.equal(w.TappdIn.searchNoteText({ searchHits: 1, searchMatched: 0 }), 'Untappd search: 1 result, none matched this name');
+  const many = w.TappdIn.buildUntappdSearchResolution(
+    'mikerphone brewing',
+    'Driving up the coast',
+    [lookalike, hit],
+    2
+  );
+  assert.equal(many.confident, true);
+  assert.equal(many.best.id, '5210382');
+  assert.equal(w.TappdIn.untappdUsername('https://untappd.com/user/jr00ck'), 'jr00ck');
+  assert.equal(w.TappdIn.untappdUsername('@jr00ck'), 'jr00ck');
 });
 
 test('profile HTML capture merges check-ins without duplicating', () => {

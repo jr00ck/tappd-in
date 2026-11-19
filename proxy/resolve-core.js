@@ -390,7 +390,39 @@ export function isUntappdSearchConfident(best, second, beer, brewery, hitCount) 
 
 /** Merge Untappd search hits into an existing resolve body (miss recovery). */
 export function applyUntappdSearchHits(body, brewery, beer, hits, extras = {}) {
-  const scored = scoreUntappdSearchHits(brewery, beer, hits);
+  const list = Array.isArray(hits) ? hits : [];
+  const reported = Number(extras.nbHits);
+  const nbHits = Number.isFinite(reported) ? reported : list.length;
+  // Search Untappd showed one beer. Accept it even when our name score is 0.
+  if (nbHits === 1 && list.length === 1) {
+    const sole = untappdUrlFromAlgoliaHit(list[0]);
+    if (sole) {
+      const best = {
+        url: sole.url,
+        id: sole.id,
+        slug: sole.slug,
+        title: sole.title,
+        score: 1,
+        source: 'untappd_search',
+      };
+      return {
+        ...body,
+        best,
+        candidates: [best],
+        confident: true,
+        pass: extras.pass || body.pass || 'untappd_search',
+        providerCalls: extras.providerCalls != null ? extras.providerCalls : body.providerCalls,
+        untappdSearchUrl: body.untappdSearchUrl || untappdSearchWebUrl(brewery, beer),
+        meta: {
+          ...(body.meta || {}),
+          untappdSearchHits: 1,
+          untappdSearchMatched: 1,
+        },
+      };
+    }
+  }
+
+  const scored = scoreUntappdSearchHits(brewery, beer, list);
   if (!scored.length) {
     return {
       ...body,
@@ -398,7 +430,7 @@ export function applyUntappdSearchHits(body, brewery, beer, hits, extras = {}) {
       providerCalls: extras.providerCalls != null ? extras.providerCalls : body.providerCalls,
       meta: {
         ...(body.meta || {}),
-        untappdSearchHits: (hits || []).length,
+        untappdSearchHits: nbHits,
         untappdSearchMatched: 0,
       },
     };
@@ -426,7 +458,7 @@ export function applyUntappdSearchHits(body, brewery, beer, hits, extras = {}) {
     untappdSearchUrl: body.untappdSearchUrl || untappdSearchWebUrl(brewery, beer),
     meta: {
       ...(body.meta || {}),
-      untappdSearchHits: (hits || []).length,
+      untappdSearchHits: nbHits,
       untappdSearchMatched: scored.length,
     },
   };
@@ -545,4 +577,97 @@ export function buildResolveResponse(brewery, beer, pages, extras = {}) {
   }
 
   return body;
+}
+
+function stripHtml(value) {
+  return String(value || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Date string the app can parse: gregtime, a unix stamp, or the time-link text. */
+function activityCreatedAt(chunk, links) {
+  const greg = (chunk.match(/data-gregtime=["']([^"']+)["']/) || [])[1] || '';
+  if (greg) return greg;
+  const datetime = (chunk.match(/\bdatetime=["']([^"']+)["']/) || [])[1] || '';
+  if (datetime) return datetime;
+  const stamp = (chunk.match(/data-timestamp=["'](\d{9,})["']/) || [])[1];
+  if (stamp) {
+    const d = new Date(Number(stamp) * 1000);
+    if (!Number.isNaN(d.getTime())) return d.toUTCString();
+  }
+  const timeLink = (links || []).find((link) => /\/checkin\/\d+|\/c\/\d+/.test(link.href));
+  if (timeLink && timeLink.text.length <= 48) return timeLink.text;
+  return '';
+}
+
+/** Check-ins from an Untappd profile activity page. Public pages only include what's loaded. */
+export function parseUntappdActivityHtml(html) {
+  const parts = String(html || '').split('data-checkin-id="').slice(1);
+  const out = [];
+  const seen = new Set();
+  for (const part of parts) {
+    const id = (part.match(/^(\d+)/) || [])[1];
+    if (!id || seen.has(id)) continue;
+    const chunk = part.slice(0, 80000);
+    const links = [];
+    const re = /<a\b[^>]*href="(\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    let match;
+    while ((match = re.exec(chunk))) {
+      const text = stripHtml(match[2]);
+      if (!text) continue;
+      links.push({ href: match[1], text });
+    }
+    const beer = links.find((link) => link.href.startsWith('/b/'));
+    if (!beer) continue;
+    seen.add(id);
+    const venue = links.find((link) => link.href.startsWith('/v/'));
+    const brew = links.find((link) => (
+      !link.href.startsWith('/b/')
+      && !link.href.startsWith('/user/')
+      && !link.href.startsWith('/v/')
+    ));
+    const ratingMatch = chunk.match(/data-rating="([\d.]+)"/);
+    const when = activityCreatedAt(chunk, links);
+    const comment = stripHtml((chunk.match(/class="comment-text"[^>]*>([\s\S]*?)<\/p>/i) || [])[1] || '');
+    const serving = stripHtml((chunk.match(/class="serving"[\s\S]*?<span>([\s\S]*?)<\/span>/i) || [])[1] || '');
+    const bid = (beer.href.match(/\/(\d+)\/?(?:\?|$)/) || [])[1] || '';
+    out.push({
+      id,
+      beer: beer.text,
+      brewery: brew ? brew.text : '',
+      venue: venue ? venue.text : '',
+      rating: ratingMatch ? Number(ratingMatch[1]) : null,
+      createdAt: when,
+      bid,
+      beerUrl: `https://untappd.com${beer.href.split('?')[0]}`,
+      comment,
+      serving,
+      checkinUrl: `https://untappd.com/c/${id}`,
+    });
+  }
+  return out;
+}
+
+/** Username from "name", "@name", or an untappd.com/user/name URL. */
+export function untappdUsernameFromInput(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const stripped = raw.replace(/^@/, '');
+  try {
+    const url = new URL(stripped.includes('://') ? stripped : `https://${stripped}`);
+    if (url.hostname.replace(/^www\./i, '').toLowerCase() === 'untappd.com') {
+      const match = url.pathname.match(/^\/user\/([^/]+)/i);
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+  } catch {
+    /* plain username */
+  }
+  return /^[A-Za-z0-9._-]{1,50}$/.test(stripped) ? stripped : '';
 }

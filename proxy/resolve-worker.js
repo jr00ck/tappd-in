@@ -23,7 +23,9 @@ import {
   flattenProviderResults,
   groupProviderResults,
   isConfident,
+  parseUntappdActivityHtml,
   parseUntappdSearchConfig,
+  untappdUsernameFromInput,
 } from './resolve-core.js';
 
 const PERPLEXITY_SEARCH = 'https://api.perplexity.ai/search';
@@ -129,7 +131,8 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
   let allQueries = [`untappd-algolia:${q}`];
 
   // 1) Untappd’s own search first (fresh beers, exact /b links).
-  const hits = await algoliaBeerSearch(q, { hitsPerPage: 8 });
+  const found = await algoliaBeerSearch(q, { hitsPerPage: 8 });
+  const hits = found.hits || [];
   let body = applyUntappdSearchHits(
     buildResolveResponse(brewery, beer, [], {
       pass,
@@ -140,7 +143,7 @@ async function resolveWithPasses(apiKey, brewery, beer, debug) {
     brewery,
     beer,
     hits,
-    { pass, providerCalls }
+    { pass, providerCalls, nbHits: found.nbHits }
   );
 
   if (body.confident) {
@@ -269,7 +272,7 @@ async function algoliaQueryOnce(creds, query, hitsPerPage) {
 /** Same public Algolia search Untappd.com uses; refreshes keys if they rotate. */
 async function algoliaBeerSearch(query, { hitsPerPage = 8 } = {}) {
   const q = String(query || '').trim();
-  if (!q) return [];
+  if (!q) return { hits: [], nbHits: 0 };
   try {
     let creds = await getAlgoliaCreds();
     let res = await algoliaQueryOnce(creds, q, hitsPerPage);
@@ -284,11 +287,14 @@ async function algoliaBeerSearch(query, { hitsPerPage = 8 } = {}) {
         res = await algoliaQueryOnce(creds, q, hitsPerPage);
       }
     }
-    if (!res.ok) return [];
+      if (!res.ok) return { hits: [], nbHits: 0 };
     const data = await res.json();
-    return Array.isArray(data.hits) ? data.hits : [];
+    return {
+      hits: Array.isArray(data.hits) ? data.hits : [],
+      nbHits: Number(data.nbHits) || 0,
+    };
   } catch {
-    return [];
+    return { hits: [], nbHits: 0 };
   }
 }
 
@@ -318,7 +324,7 @@ async function resolveBatch(apiKey, items, debug) {
   // 1) Untappd Algolia for every beer (cheap, exact).
   for (let idx = 0; idx < items.length; idx += 1) {
     const q = `${items[idx].brewery} ${items[idx].beer}`.trim();
-    const hits = await algoliaBeerSearch(q, { hitsPerPage: 8 });
+    const found = await algoliaBeerSearch(q, { hitsPerPage: 8 });
     results[idx].body = applyUntappdSearchHits(
       buildResolveResponse(items[idx].brewery, items[idx].beer, [], {
         pass: 'untappd_search',
@@ -327,8 +333,8 @@ async function resolveBatch(apiKey, items, debug) {
       }),
       items[idx].brewery,
       items[idx].beer,
-      hits,
-      { pass: 'untappd_search', providerCalls }
+      found.hits || [],
+      { pass: 'untappd_search', providerCalls, nbHits: found.nbHits }
     );
   }
 
@@ -410,6 +416,38 @@ async function resolveBatch(apiKey, items, debug) {
   };
 }
 
+async function fetchProfileCheckins(username) {
+  const pageUrl = `https://untappd.com/user/${encodeURIComponent(username)}`;
+  const res = await fetch(pageUrl, {
+    headers: {
+      Accept: 'text/html,application/xhtml+xml',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    },
+  });
+  const html = await res.text();
+  const blocked = res.status === 403
+    || /Just a moment|cf-browser-verification|challenge-platform/i.test(html);
+  if (blocked) {
+    const err = new Error('Untappd blocked an automatic profile fetch. Use the capture bookmark while signed in.');
+    err.status = 502;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(`Untappd profile returned ${res.status}`);
+    err.status = 502;
+    throw err;
+  }
+  const checkins = parseUntappdActivityHtml(html);
+  return {
+    user: username,
+    url: pageUrl,
+    checkins,
+    count: checkins.length,
+    partial: /sign in to view more/i.test(html) || checkins.length === 0,
+  };
+}
+
 export default {
   async fetch(request, env) {
     const headers = corsHeaders(
@@ -425,8 +463,9 @@ export default {
     const path = url.pathname.replace(/\/$/, '') || '/';
     const isResolve = path === '/' || path.endsWith('/resolve');
     const isBatch = path.endsWith('/resolve-batch');
+    const isCheckins = path.endsWith('/checkins');
 
-    if (!isResolve && !isBatch) {
+    if (!isResolve && !isBatch && !isCheckins) {
       return json({
         error: 'Not found',
         hint: 'GET /resolve?brewery=…&beer=… or POST /resolve-batch',
@@ -437,6 +476,23 @@ export default {
       const { success } = await env.SEARCH_LIMITER.limit({ key: clientKey(request) });
       if (!success) {
         return json({ error: 'Rate limit exceeded', hint: 'Try again in a minute.' }, 429, headers);
+      }
+    }
+
+    if (isCheckins) {
+      if (request.method !== 'GET') {
+        return json({ error: 'GET only for /checkins' }, 405, headers);
+      }
+      const user = untappdUsernameFromInput(url.searchParams.get('user') || '');
+      if (!user) {
+        return json({ error: 'Missing Untappd username or profile URL' }, 400, headers);
+      }
+      try {
+        return json(await fetchProfileCheckins(user), 200, headers);
+      } catch (err) {
+        return json({
+          error: err.message || 'Profile fetch failed',
+        }, err.status || 502, headers);
       }
     }
 

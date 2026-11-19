@@ -54,7 +54,10 @@
         </div>
         <div class="import-block">
           <h3 class="subsection-title">Recent check-ins from the site</h3>
-          <p class="hint">Tappd In can’t read an Untappd login in its own window. Sign in on untappd.com, open your profile, scroll so the check-ins you want are on screen, then run the capture bookmark. It copies those check-ins. Come back and paste them here.</p>
+          <p class="hint">Update check-ins reads your public Untappd profile. Untappd often only shows a few check-ins until you’re signed in, and it may block the automatic fetch. The bookmark still works on the signed-in page: scroll so the check-ins you want are on screen, run it, then paste them here.</p>
+          <label for="untappd-user">Untappd username or profile URL</label>
+          <input type="text" id="untappd-user" autocomplete="off" placeholder="yourname or untappd.com/user/yourname">
+          <button type="button" id="sync-checkins-btn" class="secondary-outline-btn">Update check-ins</button>
           <div class="row-actions">
             <button type="button" id="copy-capture-btn" class="secondary-outline-btn">Copy capture bookmark</button>
             <button type="button" id="paste-checkins-btn" class="secondary-outline-btn">Paste check-ins</button>

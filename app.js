@@ -7,12 +7,13 @@ const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 const LIBRARY_KEY = 'tappd-in.beerLibrary';
 
-const APP_VERSION = '0.9.5-beta';
+const APP_VERSION = '0.9.6-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
+  'One Untappd search result is linked, including typos and shortened names',
   'Find links runs the same Untappd search as Search Untappd and links a single exact hit',
   'A miss shows how many Untappd search results came back',
   'Re-importing a check-ins CSV adds new rows and updates ratings without duplicating',
@@ -263,13 +264,30 @@ function tokensNear(a, b) {
   return editDistance(a, b) <= 1;
 }
 
-/** Score one Untappd beer-index hit against the typed brewery + beer. */
-function scoreAlgoliaHit(brewery, beer, hit) {
+/** Untappd beer-index hit → a link, before name scoring. */
+function candidateFromAlgoliaHit(hit) {
   const beerName = String(hit?.beer_name || '').trim();
   const breweryName = String(hit?.brewery_name || '').trim();
   const slug = String(hit?.beer_slug || '').toLowerCase().trim();
   const id = String(hit?.bid || hit?.objectID || '').trim();
   if (!beerName || !slug || !/^\d+$/.test(id)) return null;
+  return {
+    url: `https://untappd.com/b/${slug}/${id}`,
+    id,
+    slug,
+    title: breweryName ? `${beerName} - ${breweryName}` : beerName,
+    score: 0,
+    source: 'untappd_search',
+  };
+}
+
+/** Score one Untappd beer-index hit against the typed brewery + beer. */
+function scoreAlgoliaHit(brewery, beer, hit) {
+  const base = candidateFromAlgoliaHit(hit);
+  if (!base) return null;
+  const beerName = String(hit?.beer_name || '').trim();
+  const breweryName = String(hit?.brewery_name || '').trim();
+  const slug = String(hit?.beer_slug || '').toLowerCase().trim();
 
   const brewTokens = searchTokens(normalizeBreweryText(brewery));
   const brewHay = `${normalizeBreweryText(breweryName)} ${normalizeMatchText(slug)}`;
@@ -292,48 +310,64 @@ function scoreAlgoliaHit(brewery, beer, hit) {
   if (score <= 0) return null;
 
   return {
-    url: `https://untappd.com/b/${slug}/${id}`,
-    id,
-    slug,
+    ...base,
     title: breweryName ? `${beerName} - ${breweryName}` : beerName,
+    slug,
     score: Math.round(score * 1000) / 1000,
-    source: 'untappd_search',
   };
 }
 
 /**
  * Turn Untappd search hits into a resolve body.
- * A single search result that already matches the name is confident — that is
- * the “Search Untappd shows exactly one beer” case.
+ * One result from that search is the link, even when the typed name is off.
  */
 function buildUntappdSearchResolution(brewery, beer, hits, nbHits) {
+  const parsed = [];
   const scored = [];
   for (const hit of hits || []) {
+    const base = candidateFromAlgoliaHit(hit);
+    if (!base) continue;
+    parsed.push(base);
     const row = scoreAlgoliaHit(brewery, beer, hit);
     if (row) scored.push(row);
   }
   scored.sort((a, b) => b.score - a.score || a.slug.length - b.slug.length);
-  const best = scored[0] || null;
-  const second = scored[1];
   const raw = Number(nbHits);
-  const hitCount = Number.isFinite(raw) ? raw : (hits || []).length;
-  let confident = false;
-  if (best) {
-    if (best.score >= 0.95 && (!second || best.score - second.score >= 0.08)) confident = true;
-    else if (best.score >= 0.72 && !second) confident = true;
-    else if (hitCount === 1 && best.score >= 0.55) confident = true;
-  }
-  // Below 0.55 the row UI would still auto-accept a lone candidate. Keep those out.
-  const kept = scored.filter((c) => c.score >= 0.55);
-  return {
-    best: confident ? best : (kept[0] || null),
-    candidates: kept.slice(0, 5),
-    confident,
+  const hitCount = Number.isFinite(raw) ? raw : parsed.length;
+  const envelope = {
     source: 'untappd_search',
     untappdSearchUrl: untappdSearchWebUrl(brewery, beer),
     query: { brewery, beer },
     pass: 'untappd_search',
     providerCalls: 0,
+  };
+
+  // The Search Untappd page showed one beer. Take it, typos and missing words included.
+  if (hitCount === 1 && parsed.length === 1) {
+    const named = scored.find((row) => row.id === parsed[0].id);
+    const only = { ...(named || parsed[0]), score: Math.max((named && named.score) || 0, 1) };
+    return {
+      ...envelope,
+      best: only,
+      candidates: [only],
+      confident: true,
+      meta: { untappdSearchHits: 1, untappdSearchMatched: 1 },
+    };
+  }
+
+  const best = scored[0] || null;
+  const second = scored[1];
+  let confident = false;
+  if (best) {
+    if (best.score >= 0.95 && (!second || best.score - second.score >= 0.08)) confident = true;
+    else if (best.score >= 0.72 && !second) confident = true;
+  }
+  const kept = scored.filter((c) => c.score >= 0.55);
+  return {
+    ...envelope,
+    best: confident ? best : (kept[0] || null),
+    candidates: kept.slice(0, 5),
+    confident,
     meta: {
       untappdSearchHits: hitCount,
       untappdSearchMatched: kept.length,
@@ -485,6 +519,7 @@ function loadSettings() {
     resolveUrl: String(parsed.resolveUrl || '').trim(),
     openInApp: parsed.openInApp !== false,
     breweryBrowseSort: BREWERY_BROWSE_SORTS.has(sort) ? sort : 'name',
+    untappdUser: String(parsed.untappdUser || '').trim(),
   };
 }
 
@@ -494,7 +529,23 @@ function saveSettings(settings) {
     resolveUrl: String(settings.resolveUrl || '').trim(),
     openInApp: settings.openInApp !== false,
     breweryBrowseSort: BREWERY_BROWSE_SORTS.has(sort) ? sort : 'name',
+    untappdUser: String(settings.untappdUser || '').trim(),
   });
+}
+
+function untappdUsername(input) {
+  const raw = String(input || '').trim().replace(/^@/, '');
+  if (!raw) return '';
+  try {
+    const url = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    if (url.hostname.replace(/^www\./i, '').toLowerCase() === 'untappd.com') {
+      const match = url.pathname.match(/^\/user\/([^/]+)/i);
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+  } catch {
+    /* plain username */
+  }
+  return /^[A-Za-z0-9._-]{1,50}$/.test(raw) ? raw : '';
 }
 
 function clearResolveCache() {
@@ -1733,6 +1784,7 @@ window.TappdIn = {
   checkinsFromActivityHtml,
   untappdCaptureBookmarklet,
   describeCheckinImport,
+  untappdUsername,
   buildUntappdSearchResolution,
   searchNoteText,
   importAccountJson,
@@ -1918,6 +1970,8 @@ const importExportInput = document.getElementById('import-export-input');
 const copyCaptureBtn = document.getElementById('copy-capture-btn');
 const pasteCheckinsBtn = document.getElementById('paste-checkins-btn');
 const capturePaste = document.getElementById('capture-paste');
+const untappdUserInput = document.getElementById('untappd-user');
+const syncCheckinsBtn = document.getElementById('sync-checkins-btn');
 const libraryStatus = document.getElementById('library-status');
 const hadPanel = document.getElementById('had-panel');
 const hadCount = document.getElementById('had-count');
@@ -3160,6 +3214,7 @@ saveSettingsBtn.addEventListener('click', () => {
     resolveUrl: prev.resolveUrl,
     openInApp: !!openInAppInput.checked,
     breweryBrowseSort: prev.breweryBrowseSort,
+    untappdUser: untappdUserInput?.value || prev.untappdUser,
   });
   setHint(settingsStatus, 'Preferences saved on this device.', 'ok');
   renderSession();
@@ -3330,6 +3385,7 @@ for (const g of session.groups) {
 if (activeBrewery) activeBrewery = shortBreweryName(activeBrewery);
 saveSession(session);
 openInAppInput.checked = loadSettings().openInApp !== false;
+if (untappdUserInput) untappdUserInput.value = loadSettings().untappdUser || '';
 if (libraryStatus) {
   libraryStatus.hidden = false;
   libraryStatus.textContent = librarySummaryText();
@@ -4715,6 +4771,42 @@ copyCaptureBtn?.addEventListener('click', async () => {
       capturePaste.value = url;
     }
     setHint(settingsStatus, 'Clipboard blocked. The bookmark is in the box — copy it from there.', 'error');
+  }
+});
+
+syncCheckinsBtn?.addEventListener('click', async () => {
+  const user = untappdUsername(untappdUserInput?.value || '');
+  if (!user) {
+    setHint(settingsStatus, 'Enter your Untappd username or profile URL.', 'error');
+    return;
+  }
+  const prev = loadSettings();
+  saveSettings({ ...prev, untappdUser: untappdUserInput?.value?.trim() || user });
+  setHint(settingsStatus, 'Reading your public Untappd profile…');
+  syncCheckinsBtn.disabled = true;
+  try {
+    const base = (prev.resolveUrl || DEFAULT_RESOLVE_URL).replace(/\/resolve\/?$/, '/checkins');
+    const endpoint = new URL(base);
+    endpoint.searchParams.set('user', user);
+    const res = await fetch(endpoint.href, { headers: { Accept: 'application/json' } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Profile fetch failed (${res.status})`);
+    const checkins = Array.isArray(data.checkins) ? data.checkins : [];
+    if (!checkins.length) {
+      throw new Error('No public check-ins on that profile. Use the capture bookmark while signed in.');
+    }
+    const imported = importCapturedCheckins(JSON.stringify({ tappdInCapture: 1, checkins }));
+    refreshAfterLibraryChange();
+    const newest = groupCheckinsByMonth(loadLibrary().checkins || [])[0];
+    if (newest) hadMonthOpen.set(newest.key, true);
+    renderHadLog();
+    const summary = describeCheckinImport(imported) || 'Check-ins saved';
+    const limit = data.partial ? ' Public profile only — sign in and use the bookmark for more.' : '';
+    setHint(settingsStatus, `${summary}.${limit}`, 'ok');
+  } catch (err) {
+    setHint(settingsStatus, err?.message || 'Could not read that profile', 'error');
+  } finally {
+    syncCheckinsBtn.disabled = false;
   }
 });
 

@@ -4,6 +4,16 @@ All notable changes to Tappd In are listed here.
 Generated with [git-cliff](https://git-cliff.org); keep commits conventional when you can.
 
 <!-- git-cliff: end of header -->
+## [0.9.6-beta] - 2026-11-18
+
+### Features
+
+- A single Untappd search result is the link, including typos and shortened names
+- Update check-ins reads a saved public Untappd profile through the resolver
+
+### Bug Fixes
+
+- Tres Maleditci / Brujos now links when Untappd search has one result
 ## [0.9.5-beta] - 2026-11-18
 
 ### Features

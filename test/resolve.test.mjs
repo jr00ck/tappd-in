@@ -17,7 +17,9 @@ import {
   scoreUntappdSearchHits,
   applyUntappdSearchHits,
   isUntappdSearchConfident,
+  parseUntappdActivityHtml,
   parseUntappdSearchConfig,
+  untappdUsernameFromInput,
 } from '../proxy/resolve-core.js';
 
 test('cleanUntappdTitle strips Photos chrome before beer/brewery split', () => {
@@ -192,6 +194,57 @@ test('parseUntappdSearchConfig reads visitor search keys from HTML', () => {
     index: 'beer',
   });
   assert.equal(parseUntappdSearchConfig('<html></html>'), null);
+});
+
+test('one Untappd search hit is accepted even when the typed name misses', () => {
+  const hit = {
+    bid: 7142831,
+    beer_name: 'Tres Maledicti',
+    brewery_name: 'Brujos Brewing',
+    beer_slug: 'brujos-brewing-tres-maledicti',
+    objectID: '7142831',
+  };
+  const scored = scoreUntappdSearchHits('Brujos', 'Tres Maleditci', [hit]);
+  assert.equal(scored.length, 0);
+  const miss = buildResolveResponse('Brujos', 'Tres Maleditci', []);
+  const recovered = applyUntappdSearchHits(miss, 'Brujos', 'Tres Maleditci', [hit], { nbHits: 1 });
+  assert.equal(recovered.confident, true);
+  assert.equal(recovered.best.id, '7142831');
+  assert.equal(recovered.meta.untappdSearchHits, 1);
+});
+
+test('parseUntappdActivityHtml reads a profile check-in card', () => {
+  const html = `
+    <div class="item" data-checkin-id="988496714">
+      <div class="checkin">
+        <p class="text">
+          <a href="/user/gregavola">Greg</a> is drinking an
+          <a href="/b/alvarium-beer-company-i-remember-my-first-check-in-tepache-sour/4138042">I Remember My First Check-In: Tepache Sour</a>
+          by <a href="/AlvariumBeer">Alvarium Beer Company</a>
+          at <a href="/v/at-home/9917985">Untappd at Home</a>
+        </p>
+        <p class="comment-text">Nice beer</p>
+        <div class="caps" data-rating="4.25"></div>
+        <p class="serving"><span>Can</span></p>
+        <a class="time" data-gregtime="Wed, 20 Jan 2021 23:48:00 +0000">20 Jan 21</a>
+      </div>
+    </div>`;
+  const rows = parseUntappdActivityHtml(html);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, '988496714');
+  assert.equal(rows[0].beer, 'I Remember My First Check-In: Tepache Sour');
+  assert.equal(rows[0].brewery, 'Alvarium Beer Company');
+  assert.equal(rows[0].rating, 4.25);
+  assert.equal(rows[0].bid, '4138042');
+  assert.equal(rows[0].createdAt, 'Wed, 20 Jan 2021 23:48:00 +0000');
+  const stamped = parseUntappdActivityHtml(`
+    <div data-checkin-id="1">
+      <a href="/b/example-beer/9">Example</a>
+      <a href="/ExampleBrew">Example Brew</a>
+      <a href="/user/someone/checkin/1" data-timestamp="1611186480">20 Jan 21</a>
+    </div>`);
+  assert.equal(stamped[0].createdAt.includes('2021'), true);
+  assert.equal(untappdUsernameFromInput('https://untappd.com/user/jr00ck/'), 'jr00ck');
 });
 
 test('Mikerphone Driving Up the Coast single search hit auto-resolves', () => {
