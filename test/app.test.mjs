@@ -28,10 +28,10 @@ function boot(setup) {
   return { dom, errors, w: dom.window, d: dom.window.document };
 }
 
-test('boots as v0.9.4-beta with chip + find UI', () => {
+test('boots as v0.9.5-beta with chip + find UI', () => {
   const { d, errors } = boot();
   assert.equal(errors.length, 0, errors.join(' | '));
-  assert.equal(d.getElementById('app-version').textContent, 'v0.9.4-beta');
+  assert.equal(d.getElementById('app-version').textContent, 'v0.9.5-beta');
   assert.ok(d.getElementById('brewery-chip'));
   assert.ok(d.getElementById('brewery-suggest'));
   assert.ok(d.getElementById('nav-trends'));
@@ -110,6 +110,110 @@ test('import checkins CSV marks Had and resolves Lupulin from export', () => {
     Array.from(groups.find((g) => g.key === '2025-12').checkins, (c) => c.beer),
     ['Warm Glow', 'Crispy Morning']
   );
+});
+
+test('re-importing a check-ins CSV updates ratings and keeps local-only rows', () => {
+  const { w } = boot();
+  const csv = fs.readFileSync(
+    path.join(root, 'test/fixtures/untappd-checkins-sample.csv'),
+    'utf8'
+  );
+  const first = w.TappdIn.importCheckinsCsv(csv);
+  assert.equal(first.added, 6);
+  assert.equal(first.updated, 0);
+  const again = w.TappdIn.importCheckinsCsv(csv);
+  assert.equal(again.added, 0);
+  assert.equal(again.updated, 0);
+  assert.equal(again.unchanged, 6);
+  assert.equal(again.rows, 6);
+
+  const lib = JSON.parse(w.localStorage.getItem('tappd-in.beerLibrary'));
+  lib.checkins.push({
+    id: 'local-only',
+    beer: 'Kitchen Test',
+    brewery: 'Home',
+    breweryFull: 'Home Brewing',
+    rating: 3,
+    createdAt: '2026-11-01 12:00:00',
+  });
+  w.localStorage.setItem('tappd-in.beerLibrary', JSON.stringify(lib));
+
+  const updatedCsv = csv.replace(
+    'TDH Infinite Content,North Park Beer Company,IPA - New England / Hazy,7.2,9,,Beer Barn,Gilbert,AZ,United States,33.3216,-111.72,4,',
+    'TDH Infinite Content,North Park Beer Company,IPA - New England / Hazy,7.2,9,,Beer Barn,Gilbert,AZ,United States,33.3216,-111.72,4.75,'
+  );
+  const third = w.TappdIn.importCheckinsCsv(updatedCsv);
+  assert.equal(third.added, 0);
+  assert.equal(third.updated, 1);
+  assert.equal(third.rows, 7);
+  const after = JSON.parse(w.localStorage.getItem('tappd-in.beerLibrary'));
+  const tdh = after.checkins.find((c) => c.beer === 'TDH Infinite Content');
+  assert.equal(tdh.rating, 4.75);
+  assert.ok(after.checkins.some((c) => c.id === 'local-only'));
+  assert.equal(w.TappdIn.describeCheckinImport(third), 'Check-ins: 1 updated, 5 already saved');
+});
+
+test('Untappd search single hit links Driving Up the Coast', () => {
+  const { w } = boot();
+  const hit = {
+    bid: 5210382,
+    beer_name: 'Driving Up the Coast',
+    brewery_name: 'Mikerphone Brewing',
+    beer_slug: 'mikerphone-brewing-driving-up-the-coast',
+  };
+  const body = w.TappdIn.buildUntappdSearchResolution('mikerphone brewing', 'Driving up the coast', [hit], 1);
+  assert.equal(body.confident, true);
+  assert.equal(body.best.id, '5210382');
+  assert.equal(body.meta.untappdSearchHits, 1);
+  assert.match(body.untappdSearchUrl, /Driving\+up\+the\+coast/);
+
+  const lookalike = {
+    ...hit,
+    bid: 1,
+    beer_name: 'Driving Up the Coast Again',
+    beer_slug: 'mikerphone-brewing-driving-up-the-coast-again',
+  };
+  const weak = w.TappdIn.buildUntappdSearchResolution('mikerphone brewing', 'Driving up the coast', [lookalike], 1);
+  assert.equal(weak.confident, false);
+  assert.equal(weak.candidates.length, 0);
+  assert.equal(w.TappdIn.searchNoteText({ searchHits: 1, searchMatched: 0 }), 'Untappd search: 1 result, none matched this name');
+});
+
+test('profile HTML capture merges check-ins without duplicating', () => {
+  const { w } = boot();
+  const html = `
+    <div class="item" data-checkin-id="988496714">
+      <div class="checkin">
+        <p class="text">
+          <a href="/user/gregavola">Greg</a> is drinking an
+          <a href="/b/alvarium-beer-company-i-remember-my-first-check-in-tepache-sour/4138042">I Remember My First Check-In: Tepache Sour</a>
+          by <a href="/AlvariumBeer">Alvarium Beer Company</a>
+          at <a href="/v/at-home/9917985">Untappd at Home</a>
+        </p>
+        <p class="comment-text">Nice beer</p>
+        <div class="caps" data-rating="4.25"></div>
+        <p class="serving"><span>Can</span></p>
+        <a class="time" data-gregtime="Wed, 20 Jan 2021 23:48:00 +0000">20 Jan 21</a>
+      </div>
+    </div>`;
+  const parsed = w.TappdIn.checkinsFromActivityHtml(html);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].beer, 'I Remember My First Check-In: Tepache Sour');
+  assert.equal(parsed[0].brewery, 'Alvarium Beer Company');
+  assert.equal(parsed[0].rating, 4.25);
+  assert.equal(parsed[0].bid, '4138042');
+  const first = w.TappdIn.importCapturedCheckins(JSON.stringify({ tappdInCapture: 1, checkins: parsed }));
+  assert.equal(first.added, 1);
+  const second = w.TappdIn.importCapturedCheckins(html);
+  assert.equal(second.added, 0);
+  assert.equal(second.updated, 0);
+  assert.equal(second.rows, 1);
+  const lib = JSON.parse(w.localStorage.getItem('tappd-in.beerLibrary'));
+  assert.equal(lib.checkins[0].rating, 4.25);
+  assert.match(lib.checkins[0].createdAt, /^2021-01-20/);
+  const bookmark = w.TappdIn.untappdCaptureBookmarklet();
+  assert.match(bookmark, /^javascript:\(function\(\)/);
+  assert.doesNotThrow(() => new w.Function(bookmark.slice('javascript:'.length)));
 });
 
 test('account JSON is saved beers, not dated check-ins', () => {
@@ -540,8 +644,25 @@ test('cache hit skips network on resolveBeer; bypassCache forces fetch', async (
     source: 'search',
   });
   let fetched = 0;
-  w.fetch = async () => {
+  w.fetch = async (url) => {
     fetched += 1;
+    const href = String(url);
+    if (href.includes('algolia.net')) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            nbHits: 1,
+            hits: [{
+              bid: 2706030,
+              beer_name: 'Something Mosaic',
+              brewery_name: 'Finback Brewery',
+              beer_slug: 'finback-brewery-something-mosaic',
+            }],
+          };
+        },
+      };
+    }
     return {
       ok: true,
       async json() {
@@ -565,7 +686,9 @@ test('cache hit skips network on resolveBeer; bypassCache forces fetch', async (
   const retried = await w.TappdIn.resolveBeer('Finback', 'Something Mosaic', {}, { bypassCache: true });
   assert.equal(fetched, 1);
   assert.equal(retried.fromCache, false);
-  assert.equal(retried.providerCalls, 1);
+  assert.equal(retried.providerCalls, 0);
+  assert.equal(retried.best.id, '2706030');
+  assert.equal(retried.pass, 'untappd_search');
 });
 
 test('resolve worker supports batch + perplexity', () => {

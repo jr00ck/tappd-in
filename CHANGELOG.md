@@ -4,6 +4,18 @@ All notable changes to Tappd In are listed here.
 Generated with [git-cliff](https://git-cliff.org); keep commits conventional when you can.
 
 <!-- git-cliff: end of header -->
+## [0.9.5-beta] - 2026-11-18
+
+### Features
+
+- Find links runs Untappd’s own beer search in the app and links a single exact hit
+- Misses show how many Untappd search results came back
+- Re-importing a check-ins CSV updates ratings and adds new rows without duplicating
+- Copy check-ins from a signed-in Untappd profile page and paste them into the app
+
+### Bug Fixes
+
+- Deploy the Algolia-first resolver so Search Untappd’s one-result beers actually link
 ## [0.9.4-beta] - 2026-11-04
 
 ### Features

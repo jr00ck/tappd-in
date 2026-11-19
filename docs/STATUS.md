@@ -1,9 +1,15 @@
 # Tappd In — status
 
-**Version:** 0.9.4-beta  
+**Version:** 0.9.5-beta  
 **Live:** https://jr00ck.github.io/tappd-in/  
 **Worker:** https://tappd-in-catalog.rerun-cost-xbox.workers.dev (`GET /resolve`, `POST /resolve-batch`)  
-**Updated:** 2026-11-04
+**Updated:** 2026-11-18
+
+## What changed (0.9.5)
+
+- **Find links** — the app runs the same Untappd beer search as the Search Untappd link and auto-links one exact hit. A miss shows “Untappd search: N results” so you can see whether the search itself was empty.
+- **Check-in CSV** — re-import merges by check-in id: new rows are added, changed ratings and notes are updated, duplicates are skipped, and check-ins that exist only on this device stay.
+- **Profile paste** — a bookmarklet copies the check-ins loaded on your Untappd profile (you have to be signed in there). The app cannot read an Untappd login inside its own window.
 
 ## What changed (0.9.4)
 
@@ -54,4 +60,4 @@ Stay on `0.x.y-beta` until an explicit **1.0** launch. Do not tag `1.x` before t
 
 - Brewery avg = mean of unique beers you’ve rated there (not re-weighted by re-checkins)
 - Locate uses Nominatim; never auto-runs on open
-- CSV re-import overwrites local check-in edits
+- CSV re-import updates fields from the file (ratings, notes, place). Check-ins that are not in the file are kept. A profile paste only fills the fields it could see.

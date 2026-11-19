@@ -7,12 +7,15 @@ const HISTORY_KEY = 'tappd-in.breweryHistory';
 const SESSION_KEY = 'tappd-in.session';
 const LIBRARY_KEY = 'tappd-in.beerLibrary';
 
-const APP_VERSION = '0.9.4-beta';
+const APP_VERSION = '0.9.5-beta';
 // Short build id while iterating — set e.g. 'a1', clear before tagging a release.
 // Never shown on the live Pages host even if forgotten.
 const PREVIEW_BUILD = '';
 const PRODUCTION_HOST = 'jr00ck.github.io';
 const RELEASE_NOTES = [
+  'Find links runs the same Untappd search as Search Untappd and links a single exact hit',
+  'A miss shows how many Untappd search results came back',
+  'Re-importing a check-ins CSV adds new rows and updates ratings without duplicating',
   'Find links uses Untappd’s own search first (auto-links exact hits); AI web search is the fallback',
   'Search Untappd opens the real search outside the in-app browser',
   'Breweries tab — search + sort by A–Z, rating, or beer count',
@@ -218,6 +221,133 @@ function untappdSearchWebUrl(brewery, beer) {
   url.searchParams.set('q', q);
   url.searchParams.set('type', 'beer');
   return url.href;
+}
+
+/**
+ * Same public Algolia index as untappd.com/search. Search-only key is the one
+ * Untappd embeds for every visitor; the worker refreshes it if Untappd rotates it.
+ */
+const UNTAPPD_ALGOLIA = {
+  appId: '9WBO4RQ3HO',
+  searchKey: '1d347324d67ec472bb7132c66aead485',
+  index: 'beer',
+};
+
+function editDistance(a, b) {
+  const s = String(a || '');
+  const t = String(b || '');
+  if (s === t) return 0;
+  const m = s.length;
+  const n = t.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= n; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[m][n];
+}
+
+function searchTokens(s) {
+  return normalizeMatchText(s).split(' ').filter((w) => w.length > 1 || /^[a-z]$/.test(w));
+}
+
+function tokensNear(a, b) {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 4) return false;
+  return editDistance(a, b) <= 1;
+}
+
+/** Score one Untappd beer-index hit against the typed brewery + beer. */
+function scoreAlgoliaHit(brewery, beer, hit) {
+  const beerName = String(hit?.beer_name || '').trim();
+  const breweryName = String(hit?.brewery_name || '').trim();
+  const slug = String(hit?.beer_slug || '').toLowerCase().trim();
+  const id = String(hit?.bid || hit?.objectID || '').trim();
+  if (!beerName || !slug || !/^\d+$/.test(id)) return null;
+
+  const brewTokens = searchTokens(normalizeBreweryText(brewery));
+  const brewHay = `${normalizeBreweryText(breweryName)} ${normalizeMatchText(slug)}`;
+  if (brewTokens.length && !brewTokens.some((t) => brewHay.includes(t))) return null;
+
+  const beerNorm = normalizeMatchText(beer);
+  const hitBeer = normalizeMatchText(beerName);
+  const beerTokens = searchTokens(beer);
+  const hitTokens = hitBeer.split(' ').filter(Boolean);
+  if (!beerTokens.length) return null;
+  const covered = beerTokens.filter((t) => hitTokens.some((s) => tokensNear(s, t))).length;
+  const coverage = covered / beerTokens.length;
+  if (coverage < 0.6) return null;
+
+  const extras = hitTokens.filter((t) => !beerTokens.some((q) => tokensNear(q, t)) && t.length > 2);
+  let score = coverage * 0.7;
+  if (hitBeer === beerNorm) score += 0.55;
+  else score -= extras.length * 0.25;
+  score -= (1 - coverage) * 0.4;
+  if (score <= 0) return null;
+
+  return {
+    url: `https://untappd.com/b/${slug}/${id}`,
+    id,
+    slug,
+    title: breweryName ? `${beerName} - ${breweryName}` : beerName,
+    score: Math.round(score * 1000) / 1000,
+    source: 'untappd_search',
+  };
+}
+
+/**
+ * Turn Untappd search hits into a resolve body.
+ * A single search result that already matches the name is confident — that is
+ * the “Search Untappd shows exactly one beer” case.
+ */
+function buildUntappdSearchResolution(brewery, beer, hits, nbHits) {
+  const scored = [];
+  for (const hit of hits || []) {
+    const row = scoreAlgoliaHit(brewery, beer, hit);
+    if (row) scored.push(row);
+  }
+  scored.sort((a, b) => b.score - a.score || a.slug.length - b.slug.length);
+  const best = scored[0] || null;
+  const second = scored[1];
+  const raw = Number(nbHits);
+  const hitCount = Number.isFinite(raw) ? raw : (hits || []).length;
+  let confident = false;
+  if (best) {
+    if (best.score >= 0.95 && (!second || best.score - second.score >= 0.08)) confident = true;
+    else if (best.score >= 0.72 && !second) confident = true;
+    else if (hitCount === 1 && best.score >= 0.55) confident = true;
+  }
+  // Below 0.55 the row UI would still auto-accept a lone candidate. Keep those out.
+  const kept = scored.filter((c) => c.score >= 0.55);
+  return {
+    best: confident ? best : (kept[0] || null),
+    candidates: kept.slice(0, 5),
+    confident,
+    source: 'untappd_search',
+    untappdSearchUrl: untappdSearchWebUrl(brewery, beer),
+    query: { brewery, beer },
+    pass: 'untappd_search',
+    providerCalls: 0,
+    meta: {
+      untappdSearchHits: hitCount,
+      untappdSearchMatched: kept.length,
+    },
+  };
+}
+
+function searchNoteText(row) {
+  if (!row || row.searchHits == null || row.searchHits === '') return '';
+  const n = Number(row.searchHits) || 0;
+  const matched = Number(row.searchMatched) || 0;
+  const noun = n === 1 ? '1 result' : `${n} results`;
+  if (n > 0 && matched === 0) return `Untappd search: ${noun}, none matched this name`;
+  return `Untappd search: ${noun}`;
 }
 
 function preferUntappdApp() {
@@ -960,31 +1090,268 @@ function fmtDistance(meters) {
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
-function importCheckinsCsv(text) {
-  const rows = parseCsv(text);
-  const lib = loadLibrary();
+function checkinSignature(c) {
+  return [
+    c.beer, c.breweryFull, c.style, c.abv, c.ibu, c.comment, c.venue,
+    c.venueCity, c.venueState, c.rating, c.createdAt, c.bid, c.serving,
+    c.globalRating, c.photoUrl, c.purchaseVenue, c.friends,
+  ].map((v) => (v == null ? '' : String(v))).join('\u001f');
+}
+
+function libraryCheckinMap(lib) {
   const byId = new Map();
-  const brewCounts = new Map();
-  rows.forEach((row, index) => {
-    const checkin = checkinFromCsvRow(row, index);
-    if (!checkin) return;
-    byId.set(checkin.id, checkin);
-    const brewery = checkin.brewery;
-    const brewKey = normalizeBreweryText(brewery);
-    brewCounts.set(brewKey, {
-      name: brewery,
-      count: (brewCounts.get(brewKey)?.count || 0) + 1,
-    });
-  });
+  for (const existing of lib.checkins || []) {
+    if (existing?.id) byId.set(String(existing.id), existing);
+  }
+  return byId;
+}
+
+function finishCheckinImport(lib, byId, brewCounts) {
   lib.checkins = [...byId.values()];
   rebuildBeerIndex(lib);
   lib.importedAt = new Date().toISOString();
   saveLibrary(lib);
-
   const top = [...brewCounts.values()].sort((a, b) => b.count - a.count).slice(0, 20);
   for (const b of top.reverse()) touchBreweryHistory(b.name);
   migrateBreweryHistory();
   return { beers: Object.keys(lib.beers).length, rows: lib.checkins.length };
+}
+
+function importCheckinsCsv(text) {
+  const rows = parseCsv(text);
+  const lib = loadLibrary();
+  const byId = libraryCheckinMap(lib);
+  const brewCounts = new Map();
+  const seen = new Set();
+  let added = 0;
+  let updated = 0;
+  let unchanged = 0;
+  rows.forEach((row, index) => {
+    const checkin = checkinFromCsvRow(row, index);
+    if (!checkin || seen.has(checkin.id)) return;
+    seen.add(checkin.id);
+    const brewKey = normalizeBreweryText(checkin.brewery);
+    brewCounts.set(brewKey, {
+      name: checkin.brewery,
+      count: (brewCounts.get(brewKey)?.count || 0) + 1,
+    });
+    const prev = byId.get(checkin.id);
+    if (!prev) {
+      byId.set(checkin.id, checkin);
+      added += 1;
+      return;
+    }
+    if (checkinSignature(prev) !== checkinSignature(checkin)) {
+      byId.set(checkin.id, { ...prev, ...checkin, id: prev.id });
+      updated += 1;
+    } else {
+      unchanged += 1;
+    }
+  });
+  return {
+    ...finishCheckinImport(lib, byId, brewCounts),
+    added,
+    updated,
+    unchanged,
+  };
+}
+
+function parseCapturedWhen(raw) {
+  const s = String(raw || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 19).replace('T', ' ');
+  const d = new Date(s);
+  if (!s || Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function cleanCaptureText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+/** Check-ins from an Untappd profile activity page (public HTML or a saved copy). */
+function checkinsFromActivityHtml(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  const out = [];
+  doc.querySelectorAll('.item[data-checkin-id]').forEach((item) => {
+    const id = item.getAttribute('data-checkin-id');
+    const links = [...item.querySelectorAll('.checkin p.text a')];
+    const beer = links.find((a) => String(a.getAttribute('href') || '').startsWith('/b/'));
+    if (!id || !beer) return;
+    const brew = links.find((a) => {
+      const href = a.getAttribute('href') || '';
+      return href && !href.startsWith('/b/') && !href.startsWith('/user/') && !href.startsWith('/v/');
+    });
+    const venue = links.find((a) => String(a.getAttribute('href') || '').startsWith('/v/'));
+    const caps = item.querySelector('.caps');
+    const rating = caps ? Number(caps.getAttribute('data-rating')) : null;
+    const when = item.querySelector('a.time');
+    const href = beer.getAttribute('href') || '';
+    const bid = (href.match(/\/(\d+)\/?$/) || [])[1] || '';
+    out.push({
+      id,
+      beer: cleanCaptureText(beer.textContent),
+      brewery: brew ? cleanCaptureText(brew.textContent) : '',
+      venue: venue ? cleanCaptureText(venue.textContent) : '',
+      rating: Number.isFinite(rating) ? rating : null,
+      createdAt: when?.getAttribute('data-gregtime') || '',
+      bid,
+      beerUrl: href ? `https://untappd.com${href.split('?')[0]}` : '',
+      comment: cleanCaptureText(item.querySelector('.comment-text')?.textContent),
+      serving: cleanCaptureText(item.querySelector('.serving span')?.textContent),
+      purchaseVenue: cleanCaptureText(item.querySelector('.purchased')?.textContent)
+        .replace(/^Purchased at\s+/i, ''),
+      checkinUrl: `https://untappd.com/c/${id}`,
+    });
+  });
+  return out;
+}
+
+function checkinFromCapture(item) {
+  const beer = String(item?.beer || '').trim();
+  const breweryFull = String(item?.brewery || item?.breweryFull || '').trim();
+  const id = String(item?.id || item?.checkinId || '').trim();
+  if (!beer || !id) return null;
+  const bid = String(item?.bid || '').trim();
+  const rating = item?.rating == null || item.rating === ''
+    ? null
+    : optionalNum(item.rating, { zeroIsEmpty: true });
+  return {
+    id,
+    checkinId: id,
+    beer,
+    brewery: shortBreweryName(breweryFull) || breweryFull,
+    breweryFull: breweryFull || shortBreweryName(breweryFull),
+    comment: String(item.comment || '').trim(),
+    venue: String(item.venue || '').trim(),
+    rating,
+    createdAt: parseCapturedWhen(item.createdAt),
+    bid,
+    serving: String(item.serving || '').trim(),
+    beerUrl: String(item.beerUrl || '').trim() || (bid ? `https://untappd.com/beer/${bid}` : ''),
+    checkinUrl: String(item.checkinUrl || '').trim() || `https://untappd.com/c/${id}`,
+    purchaseVenue: String(item.purchaseVenue || '').trim(),
+  };
+}
+
+const CAPTURE_FIELDS = [
+  'beer', 'brewery', 'breweryFull', 'comment', 'venue', 'rating', 'createdAt',
+  'bid', 'serving', 'beerUrl', 'checkinUrl', 'purchaseVenue',
+];
+
+function mergeCapturedCheckin(prev, next) {
+  const merged = { ...prev };
+  for (const key of CAPTURE_FIELDS) {
+    const value = next[key];
+    if (value == null || value === '') continue;
+    merged[key] = value;
+  }
+  merged.id = prev.id;
+  return merged;
+}
+
+function captureItemsFromText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  if (raw.startsWith('{') || raw.startsWith('[')) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error('That paste is not valid check-in data.');
+    }
+    const list = Array.isArray(data) ? data : (data.checkins || data.items || []);
+    if (!Array.isArray(list)) throw new Error('That paste has no check-ins.');
+    return list;
+  }
+  if (/data-checkin-id/i.test(raw)) return checkinsFromActivityHtml(raw);
+  throw new Error('Paste the copied check-ins, or import a check-ins CSV.');
+}
+
+function blankCheckinShell(next) {
+  return {
+    style: '',
+    abv: null,
+    ibu: null,
+    venueCity: '',
+    venueState: '',
+    venueCountry: '',
+    venueLat: null,
+    venueLng: null,
+    breweryId: '',
+    breweryCountry: '',
+    breweryCity: '',
+    breweryState: '',
+    flavors: '',
+    photoUrl: '',
+    globalRating: null,
+    globalWeighted: null,
+    friends: '',
+    toasts: null,
+    commentsCount: null,
+    breweryUrl: '',
+    ...next,
+  };
+}
+
+/** Merge check-ins copied from an Untappd profile page. Partial fields do not wipe CSV data. */
+function importCapturedCheckins(text) {
+  const items = captureItemsFromText(text);
+  const lib = loadLibrary();
+  const byId = libraryCheckinMap(lib);
+  const brewCounts = new Map();
+  let added = 0;
+  let updated = 0;
+  let unchanged = 0;
+  for (const item of items) {
+    const next = checkinFromCapture(item);
+    if (!next) continue;
+    const brewKey = normalizeBreweryText(next.brewery || next.breweryFull);
+    if (brewKey) {
+      brewCounts.set(brewKey, {
+        name: next.brewery || next.breweryFull,
+        count: (brewCounts.get(brewKey)?.count || 0) + 1,
+      });
+    }
+    const prev = byId.get(next.id);
+    if (!prev) {
+      byId.set(next.id, blankCheckinShell(next));
+      added += 1;
+      continue;
+    }
+    const merged = mergeCapturedCheckin(prev, next);
+    if (checkinSignature(merged) !== checkinSignature(prev)) {
+      byId.set(next.id, merged);
+      updated += 1;
+    } else {
+      unchanged += 1;
+    }
+  }
+  if (!added && !updated && !unchanged) throw new Error('No check-ins found in that paste.');
+  return {
+    ...finishCheckinImport(lib, byId, brewCounts),
+    added,
+    updated,
+    unchanged,
+  };
+}
+
+function untappdCaptureBookmarklet() {
+  const source = String.raw`(function(){function t(el){return ((el&&el.textContent)||'').replace(/\s+/g,' ').trim();}var out=[];document.querySelectorAll('.item[data-checkin-id]').forEach(function(item){var id=item.getAttribute('data-checkin-id');var links=[].slice.call(item.querySelectorAll('.checkin p.text a'));var beer=null,brew=null,venue=null;links.forEach(function(a){var h=a.getAttribute('href')||'';if(!beer&&h.indexOf('/b/')===0)beer=a;else if(!venue&&h.indexOf('/v/')===0)venue=a;else if(!brew&&h&&h.indexOf('/user/')!==0&&h.indexOf('/b/')!==0)brew=a;});if(!id||!beer)return;var caps=item.querySelector('.caps');var rating=caps?Number(caps.getAttribute('data-rating')):null;var when=item.querySelector('a.time');var href=beer.getAttribute('href')||'';var bid=(href.match(/\/(\d+)\/?$/)||[])[1]||'';out.push({id:id,beer:t(beer),brewery:brew?t(brew):'',venue:venue?t(venue):'',rating:isFinite(rating)?rating:null,createdAt:when?(when.getAttribute('data-gregtime')||''):'',bid:bid,beerUrl:href?('https://untappd.com'+href.split('?')[0]):'',comment:t(item.querySelector('.comment-text')),serving:t(item.querySelector('.serving span')),checkinUrl:'https://untappd.com/c/'+id});});var payload=JSON.stringify({tappdInCapture:1,checkins:out});var msg=out.length?('Copied '+out.length+' check-in'+(out.length===1?'':'s')+'. Back in Tappd In, tap Paste check-ins.'):'No check-ins on this page. Open your Untappd profile while signed in, scroll to load more, then try again.';function finish(){alert(msg);}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(payload).then(finish).catch(function(){prompt('Copy this into Tappd In',payload);});}else{prompt('Copy this into Tappd In',payload);}})();`;
+  return `javascript:${source}`;
+}
+
+function describeCheckinImport(r) {
+  if (!r) return '';
+  if (!r.added && !r.updated) {
+    const n = r.unchanged || 0;
+    return n ? `${n} check-in${n === 1 ? '' : 's'} already saved` : '';
+  }
+  const bits = [];
+  if (r.added) bits.push(`${r.added} new`);
+  if (r.updated) bits.push(`${r.updated} updated`);
+  if (r.unchanged) bits.push(`${r.unchanged} already saved`);
+  return `Check-ins: ${bits.join(', ')}`;
 }
 
 function importAccountJson(text) {
@@ -1051,6 +1418,104 @@ function clearSessionKeepCache() {
 
 // --- Resolve ---
 
+async function fetchUntappdSearchHits(query) {
+  const q = String(query || '').trim();
+  if (!q) return { hits: [], nbHits: 0 };
+  const endpoint = `https://${UNTAPPD_ALGOLIA.appId}-dsn.algolia.net/1/indexes/${UNTAPPD_ALGOLIA.index}/query`;
+  const params = new URLSearchParams({ query: q, hitsPerPage: '8' });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'X-Algolia-Application-Id': UNTAPPD_ALGOLIA.appId,
+        'X-Algolia-API-Key': UNTAPPD_ALGOLIA.searchKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ params: params.toString() }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return { hits: [], nbHits: 0, failed: true };
+    const data = await res.json();
+    return {
+      hits: Array.isArray(data.hits) ? data.hits : [],
+      nbHits: Number(data.nbHits) || 0,
+    };
+  } catch {
+    return { hits: [], nbHits: 0, failed: true };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Run the same query as the Search Untappd link, then score the hits. */
+async function searchUntappdIndex(brewery, beer) {
+  const primary = [brewery, beer].map((s) => String(s || '').trim()).filter(Boolean).join(' ');
+  const first = await fetchUntappdSearchHits(primary);
+  let body = buildUntappdSearchResolution(
+    brewery,
+    beer,
+    first.hits,
+    first.failed ? null : first.nbHits
+  );
+  if (!body.confident && !(body.candidates || []).length && !first.failed) {
+    const beerOnly = String(beer || '').trim();
+    if (beerOnly && beerOnly.toLowerCase() !== primary.toLowerCase()) {
+      const second = await fetchUntappdSearchHits(beerOnly);
+      const alt = buildUntappdSearchResolution(brewery, beer, second.hits, second.nbHits);
+      if (alt.confident || (alt.candidates || []).length) body = alt;
+    }
+  }
+  if (first.failed && body.meta) body.meta.untappdSearchHits = null;
+  return body;
+}
+
+function mergeDirectAndWorker(direct, worker) {
+  if (!direct) return worker || { confident: false, best: null, candidates: [] };
+  if (!worker) return direct;
+  const byId = new Map();
+  const add = (c) => {
+    if (!c?.url) return;
+    const key = c.id || c.url;
+    const prev = byId.get(key);
+    if (!prev || (c.score || 0) > (prev.score || 0)) byId.set(key, c);
+  };
+  for (const c of direct.candidates || []) add(c);
+  for (const c of worker.candidates || []) add(c);
+  add(direct.best);
+  add(worker.best);
+  const candidates = [...byId.values()]
+    .sort((a, b) => (b.score || 0) - (a.score || 0) || String(a.slug || '').length - String(b.slug || '').length)
+    .slice(0, 5);
+  const workerWins = !!(worker.confident && worker.best?.url);
+  const best = workerWins ? worker.best : (direct.best || worker.best || candidates[0] || null);
+  return {
+    ...worker,
+    best,
+    candidates: candidates.length ? candidates : (worker.candidates || direct.candidates || []),
+    confident: workerWins || !!direct.confident,
+    source: workerWins ? (worker.source || 'search') : (direct.source || 'untappd_search'),
+    untappdSearchUrl: direct.untappdSearchUrl || worker.untappdSearchUrl,
+    meta: {
+      ...(worker.meta || {}),
+      untappdSearchHits: direct.meta?.untappdSearchHits ?? worker.meta?.untappdSearchHits,
+      untappdSearchMatched: direct.meta?.untappdSearchMatched ?? worker.meta?.untappdSearchMatched,
+    },
+  };
+}
+
+function cacheResolved(brewery, beer, result) {
+  if (!result?.confident || !result.best?.url) return;
+  putCacheResolve(brewery, beer, {
+    url: result.best.url,
+    id: result.best.id,
+    title: result.best.title || beer,
+    source: result.source || 'search',
+  });
+}
+
 async function resolveBeer(brewery, beer, settings, opts = {}) {
   const cached = opts.bypassCache ? null : getCachedResolve(brewery, beer);
   if (cached) {
@@ -1070,40 +1535,48 @@ async function resolveBeer(brewery, beer, settings, opts = {}) {
     };
   }
 
+  const direct = await searchUntappdIndex(brewery, beer);
+  if (direct.confident && direct.best?.url) {
+    cacheResolved(brewery, beer, direct);
+    return { fromCache: false, ...direct };
+  }
+
   const base = settings.resolveUrl || DEFAULT_RESOLVE_URL;
   const endpoint = new URL(base);
   endpoint.searchParams.set('brewery', brewery);
   endpoint.searchParams.set('beer', beer);
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20000);
-  let res;
+  let data;
   try {
-    res = await fetch(endpoint.href, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timer);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20000);
+    let res;
+    try {
+      res = await fetch(endpoint.href, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      if (res.status === 429) throw new Error('Rate limit — wait a minute and try again.');
+      throw new Error(`Resolve failed (${res.status})${body ? `: ${body.slice(0, 100)}` : ''}`);
+    }
+    data = await res.json();
+  } catch (err) {
+    if (direct.best || (direct.candidates || []).length) {
+      return { fromCache: false, ...direct };
+    }
+    throw err;
   }
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    if (res.status === 429) throw new Error('Rate limit — wait a minute and try again.');
-    throw new Error(`Resolve failed (${res.status})${body ? `: ${body.slice(0, 100)}` : ''}`);
-  }
-
-  const data = await res.json();
-  if (data.confident && data.best?.url) {
-    putCacheResolve(brewery, beer, {
-      url: data.best.url,
-      id: data.best.id,
-      title: data.best.title || beer,
-      source: 'search',
-    });
-  }
-  return { fromCache: false, ...data, source: 'search' };
+  const merged = mergeDirectAndWorker(direct, data);
+  cacheResolved(brewery, beer, merged);
+  return { fromCache: false, ...merged, source: merged.source || 'search' };
 }
 
 async function resolveBeerBatch(items, settings) {
@@ -1137,43 +1610,83 @@ async function resolveBeerBatch(items, settings) {
     return { results: cachedResults, providerCalls: 0, fromCacheOnly: true };
   }
 
+  const directHits = await Promise.all(pending.map(async (it) => {
+    const direct = await searchUntappdIndex(it.brewery, it.beer);
+    if (direct.confident && direct.best?.url) cacheResolved(it.brewery, it.beer, direct);
+    return { it, direct };
+  }));
+  const linkedDirect = [];
+  const still = [];
+  for (const row of directHits) {
+    if (row.direct.confident && row.direct.best?.url) {
+      linkedDirect.push({ ...row.it, ...row.direct, fromCache: false });
+    } else {
+      still.push(row);
+    }
+  }
+
+  if (!still.length) {
+    return {
+      results: [...cachedResults, ...linkedDirect],
+      providerCalls: 0,
+      fromCacheOnly: false,
+    };
+  }
+
   const batchUrl = (settings.resolveUrl || DEFAULT_RESOLVE_URL).replace(/\/resolve\/?$/, '/resolve-batch');
   const endpoint = batchUrl.includes('resolve-batch') ? batchUrl : DEFAULT_BATCH_URL;
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 45000);
-  let res;
+  let data;
   try {
-    res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: pending }),
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    if (res.status === 429) throw new Error('Rate limit — wait a minute and try again.');
-    throw new Error(`Resolve failed (${res.status})${body ? `: ${body.slice(0, 100)}` : ''}`);
-  }
-
-  const data = await res.json();
-  const remote = Array.isArray(data.results) ? data.results : [];
-  for (const row of remote) {
-    if (row.confident && row.best?.url) {
-      putCacheResolve(row.brewery, row.beer, {
-        url: row.best.url,
-        id: row.best.id,
-        title: row.best.title || row.beer,
-        source: 'search',
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 45000);
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: still.map((row) => row.it) }),
+        signal: ctrl.signal,
       });
+    } finally {
+      clearTimeout(timer);
     }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      if (res.status === 429) throw new Error('Rate limit — wait a minute and try again.');
+      throw new Error(`Resolve failed (${res.status})${body ? `: ${body.slice(0, 100)}` : ''}`);
+    }
+    data = await res.json();
+  } catch (err) {
+    const fallback = still.map((row) => ({ ...row.it, ...row.direct, fromCache: false }));
+    if (fallback.some((row) => row.best || (row.candidates || []).length)) {
+      return {
+        results: [...cachedResults, ...linkedDirect, ...fallback],
+        providerCalls: 0,
+      };
+    }
+    throw err;
   }
+
+  const remote = Array.isArray(data.results) ? data.results : [];
+  const remoteByKey = new Map(
+    remote.map((r) => [`${normalizeBreweryText(r.brewery)}|${normalizeMatchText(r.beer)}`, r])
+  );
+  const mergedRemote = still.map((row) => {
+    const key = `${normalizeBreweryText(row.it.brewery)}|${normalizeMatchText(row.it.beer)}`;
+    const worker = remoteByKey.get(key) || { confident: false, best: null, candidates: [] };
+    const merged = mergeDirectAndWorker(row.direct, worker);
+    cacheResolved(row.it.brewery, row.it.beer, merged);
+    return {
+      ...row.it,
+      ...merged,
+      fromCache: false,
+      source: merged.source || 'search',
+    };
+  });
   return {
-    results: [...cachedResults, ...remote.map((r) => ({ ...r, fromCache: false, source: 'search' }))],
+    results: [...cachedResults, ...linkedDirect, ...mergedRemote],
     providerCalls: data.providerCalls || 0,
   };
 }
@@ -1216,6 +1729,12 @@ window.TappdIn = {
   normalizeBreweryText,
   parseCsv,
   importCheckinsCsv,
+  importCapturedCheckins,
+  checkinsFromActivityHtml,
+  untappdCaptureBookmarklet,
+  describeCheckinImport,
+  buildUntappdSearchResolution,
+  searchNoteText,
   importAccountJson,
   libraryLookup,
   breweryStats,
@@ -1396,6 +1915,9 @@ const detailRemoveBtn = document.getElementById('detail-remove-btn');
 const detailStatus = document.getElementById('detail-status');
 const importExportBtn = document.getElementById('import-export-btn');
 const importExportInput = document.getElementById('import-export-input');
+const copyCaptureBtn = document.getElementById('copy-capture-btn');
+const pasteCheckinsBtn = document.getElementById('paste-checkins-btn');
+const capturePaste = document.getElementById('capture-paste');
 const libraryStatus = document.getElementById('library-status');
 const hadPanel = document.getElementById('had-panel');
 const hadCount = document.getElementById('had-count');
@@ -2034,7 +2556,8 @@ function renderSession() {
       } else if (kind === 'pick') {
         openBlock = `<p class="row-status row-status-pick">Needs a pick — tap beer to choose</p>`;
       } else {
-        openBlock = `<p class="row-status row-status-miss">${escapeHtml(row.error || 'No Untappd match')}</p>`;
+        const note = searchNoteText(row);
+        openBlock = `<p class="row-status row-status-miss">${escapeHtml(row.error || 'No Untappd match')}</p>${note ? `<p class="hint row-search-note">${escapeHtml(note)}</p>` : ''}`;
       }
 
       const swipeClass = kind === 'pending' ? ' beer-row-pending' : '';
@@ -2137,6 +2660,10 @@ function applyResolvedRow(row, result, group) {
   row.source = result.fromCache ? 'cache' : (result.source || 'search');
   row.untappdSearchUrl = result.untappdSearchUrl || untappdSearchWebUrl(result.brewery, row.beer);
   row.error = '';
+  if (result.meta && result.meta.untappdSearchHits != null) {
+    row.searchHits = result.meta.untappdSearchHits;
+    row.searchMatched = result.meta.untappdSearchMatched ?? 0;
+  }
 
   const rawCands = (result.candidates || []).map((c) => ({
     ...c,
@@ -2571,7 +3098,8 @@ function openBeerDetail(gid, bidx) {
     pick: 'Choose a match below',
     miss: row.error || 'No Untappd match',
   }[kind] || kind;
-  detailStatusLine.textContent = statusMsg;
+  const searchNote = kind === 'miss' ? searchNoteText(row) : '';
+  detailStatusLine.textContent = searchNote ? `${statusMsg}. ${searchNote}` : statusMsg;
   detailStatusLine.className = `hint row-status-${kind === 'linked' ? 'pending' : kind === 'miss' ? 'miss' : kind === 'pick' ? 'pick' : 'pending'}`;
 
   if (kind === 'pick') {
@@ -4133,31 +4661,83 @@ importExportBtn?.addEventListener('click', () => importExportInput?.click());
 importExportInput?.addEventListener('change', async () => {
   const files = [...(importExportInput.files || [])];
   if (!files.length) return;
-  let csvRows = 0;
   let wishN = 0;
+  const csvParts = [];
   try {
     for (const file of files) {
       const text = await file.text();
-      if (/\.json$/i.test(file.name) || text.trim().startsWith('{')) {
+      const trimmed = text.trim();
+      const isAccount = /\.json$/i.test(file.name) && !/"tappdInCapture"|data-checkin-id/i.test(trimmed);
+      const isCapture = /"tappdInCapture"/.test(trimmed) || /data-checkin-id/i.test(trimmed);
+      if (isCapture) {
+        csvParts.push(describeCheckinImport(importCapturedCheckins(text)));
+      } else if (isAccount || (trimmed.startsWith('{') && /custom_lists/.test(trimmed))) {
         const r = importAccountJson(text);
         wishN += r.wish || 0;
       } else {
-        const r = importCheckinsCsv(text);
-        csvRows = r.rows;
+        csvParts.push(describeCheckinImport(importCheckinsCsv(text)));
       }
     }
     refreshAfterLibraryChange();
-    const parts = [];
-    if (csvRows) parts.push(`Imported ${csvRows} check-in${csvRows === 1 ? '' : 's'}`);
+    const parts = csvParts.filter(Boolean);
     if (wishN) parts.push(`Noted ${wishN} saved beer${wishN === 1 ? '' : 's'}`);
     const newest = groupCheckinsByMonth(loadLibrary().checkins || [])[0];
     if (newest) hadMonthOpen.set(newest.key, true);
     renderHadLog();
-    setHint(settingsStatus, `${parts.join('. ')}.`, 'ok');
+    setHint(settingsStatus, `${parts.join('. ') || 'Nothing new in that file'}.`, 'ok');
   } catch (err) {
     setHint(settingsStatus, err?.message || 'Import failed', 'error');
   }
   importExportInput.value = '';
+});
+
+async function applyPastedCheckins(text) {
+  const r = importCapturedCheckins(text);
+  if (capturePaste) {
+    capturePaste.value = '';
+    capturePaste.hidden = true;
+  }
+  refreshAfterLibraryChange();
+  const newest = groupCheckinsByMonth(loadLibrary().checkins || [])[0];
+  if (newest) hadMonthOpen.set(newest.key, true);
+  renderHadLog();
+  setHint(settingsStatus, `${describeCheckinImport(r) || 'Check-ins saved'}.`, 'ok');
+}
+
+copyCaptureBtn?.addEventListener('click', async () => {
+  const url = untappdCaptureBookmarklet();
+  try {
+    await navigator.clipboard.writeText(url);
+    setHint(settingsStatus, 'Bookmark copied. Save it as a bookmark, then run it on your Untappd profile.', 'ok');
+  } catch {
+    if (capturePaste) {
+      capturePaste.hidden = false;
+      capturePaste.value = url;
+    }
+    setHint(settingsStatus, 'Clipboard blocked. The bookmark is in the box — copy it from there.', 'error');
+  }
+});
+
+pasteCheckinsBtn?.addEventListener('click', async () => {
+  let text = capturePaste?.value?.trim() || '';
+  if (!text && navigator.clipboard?.readText) {
+    try {
+      text = (await navigator.clipboard.readText()).trim();
+    } catch {
+      text = '';
+    }
+  }
+  if (!text) {
+    if (capturePaste) capturePaste.hidden = false;
+    setHint(settingsStatus, 'Paste the copied check-ins, then tap Paste check-ins again.', 'error');
+    return;
+  }
+  try {
+    await applyPastedCheckins(text);
+  } catch (err) {
+    if (capturePaste) capturePaste.hidden = false;
+    setHint(settingsStatus, err?.message || 'Could not read those check-ins', 'error');
+  }
 });
 
 // --- Service worker: offline caching only. Updates apply via pull-to-refresh. ---

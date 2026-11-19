@@ -47,10 +47,19 @@
         <button type="button" id="save-settings-btn" class="secondary-outline-btn">Save preferences</button>
         <div class="import-block">
           <h3 class="subsection-title">Your Untappd export</h3>
-          <p class="hint">The check-ins CSV is every beer you've had, with the date, your rating, and where. The account JSON is wish lists and saved beers, without check-in dates. Both stay on this device. The log is below.</p>
+          <p class="hint">The check-ins CSV is every beer you've had, with the date, your rating, and where. Importing a newer export adds check-ins you didn't have and updates ratings. It does not duplicate ones already saved. The account JSON is wish lists, without check-in dates. Both stay on this device.</p>
           <button type="button" id="import-export-btn" class="secondary-outline-btn">Import check-ins / account</button>
           <input type="file" id="import-export-input" accept=".csv,.json,text/csv,application/json" multiple hidden>
           <p id="library-status" class="hint" hidden></p>
+        </div>
+        <div class="import-block">
+          <h3 class="subsection-title">Recent check-ins from the site</h3>
+          <p class="hint">Tappd In can’t read an Untappd login in its own window. Sign in on untappd.com, open your profile, scroll so the check-ins you want are on screen, then run the capture bookmark. It copies those check-ins. Come back and paste them here.</p>
+          <div class="row-actions">
+            <button type="button" id="copy-capture-btn" class="secondary-outline-btn">Copy capture bookmark</button>
+            <button type="button" id="paste-checkins-btn" class="secondary-outline-btn">Paste check-ins</button>
+          </div>
+          <textarea id="capture-paste" rows="3" hidden placeholder="Paste copied check-ins"></textarea>
         </div>
         <button type="button" id="clear-cache-btn" class="link-btn">Clear saved links</button>
         <button type="button" id="clear-session-btn" class="link-btn clear-session">Clear this session</button>
@@ -135,7 +144,7 @@
       <p class="hint entry-flow-hint">
         <span class="flow-step">1</span> Add to your list
         <span class="flow-sep">→</span>
-        <span class="flow-step">2</span> Tap Find links (uses search credits)
+        <span class="flow-step">2</span> Tap Find links (Untappd search first)
       </p>
       <div class="row-actions entry-actions">
         <button type="button" id="add-beer-btn" class="secondary-outline-btn">Add</button>

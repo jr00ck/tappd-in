@@ -194,6 +194,27 @@ test('parseUntappdSearchConfig reads visitor search keys from HTML', () => {
   assert.equal(parseUntappdSearchConfig('<html></html>'), null);
 });
 
+test('Mikerphone Driving Up the Coast single search hit auto-resolves', () => {
+  const hit = {
+    bid: 5210382,
+    beer_name: 'Driving Up the Coast',
+    brewery_name: 'Mikerphone Brewing',
+    beer_slug: 'mikerphone-brewing-driving-up-the-coast',
+    objectID: '5210382',
+  };
+  const scored = scoreUntappdSearchHits('mikerphone brewing', 'Driving up the coast', [hit]);
+  assert.equal(scored.length, 1);
+  assert.equal(
+    isUntappdSearchConfident(scored[0], null, 'Driving up the coast', 'mikerphone brewing', 1),
+    true
+  );
+  const miss = buildResolveResponse('mikerphone brewing', 'Driving up the coast', []);
+  const recovered = applyUntappdSearchHits(miss, 'mikerphone brewing', 'Driving up the coast', [hit]);
+  assert.equal(recovered.confident, true);
+  assert.equal(recovered.best.id, '5210382');
+  assert.equal(recovered.meta.untappdSearchHits, 1);
+});
+
 test('Untappd Algolia single hit auto-resolves Sparkling Clover', () => {
   const hit = {
     bid: 6799790,
